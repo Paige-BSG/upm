@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upm.dev/schema/phase1-v0.2/plan.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "operationId",
+    "actor",
+    "clusterUid",
+    "targetNamespace",
+    "targetNamespaceUid",
+    "restoreNamespace",
+    "restoreNamespaceUid",
+    "requiredApproverRole",
+    "requiredApproverSubject",
+    "target",
+    "factsSnapshotId",
+    "factsDigest",
+    "actions",
+    "parameters",
+    "artifactDestination",
+    "risk",
+    "timeoutMs",
+    "budget",
+    "stopConditions",
+    "approvalPolicyVersion"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "phase1-v0.2" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "actor": { "type": "string", "minLength": 1 },
+    "clusterUid": { "type": "string", "minLength": 1 },
+    "targetNamespace": { "type": "string", "minLength": 1 },
+    "targetNamespaceUid": { "type": "string", "minLength": 1 },
+    "restoreNamespace": { "type": "string", "minLength": 1 },
+    "restoreNamespaceUid": { "type": "string", "minLength": 1 },
+    "requiredApproverRole": { "type": "string", "minLength": 1 },
+    "requiredApproverSubject": { "type": "string", "minLength": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "name", "uid", "generation", "resourceVersion", "specDigest"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "uid": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "resourceVersion": { "type": "string", "minLength": 1 },
+        "specDigest": { "type": "string", "minLength": 1 }
+      }
+    },
+    "factsSnapshotId": { "type": "string", "minLength": 1 },
+    "factsDigest": { "type": "string", "minLength": 1 },
+    "actions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clusterType"],
+      "properties": {
+        "clusterType": { "const": "group-replication" }
+      }
+    },
+    "artifactDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "objectKey", "endpoint"],
+      "properties": {
+        "bucket": { "type": "string", "minLength": 1 },
+        "objectKey": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "minLength": 1 }
+      }
+    },
+    "risk": { "type": "string", "minLength": 1 },
+    "timeoutMs": { "type": "number", "exclusiveMinimum": 0 },
+    "budget": { "const": "size=1" },
+    "stopConditions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "approvalPolicyVersion": { "type": "string", "minLength": 1 }
+  }
+}

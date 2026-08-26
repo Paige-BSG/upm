@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upm.dev/schema/phase1-v0.2/journal-event.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "operationId", "sequence", "type", "previousEventDigest", "eventDigest", "payload"],
+  "properties": {
+    "schemaVersion": { "const": "phase1-v0.2" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "type": {
+      "type": "string",
+      "enum": [
+        "IntentAccepted",
+        "ApprovalConsumed",
+        "FenceWriteAhead",
+        "FenceSet",
+        "BackupWriteAhead",
+        "BackupCreated",
+        "SetBWriteAhead",
+        "SetBApplied",
+        "RestoreWriteAhead",
+        "RestoreClusterCreated",
+        "RestoreCreated",
+        "FenceReleaseWriteAhead",
+        "EvidenceStoreWriteAhead",
+        "EvidenceClosed",
+        "FenceReleaseBlocked"
+      ]
+    },
+    "previousEventDigest": { "type": ["string", "null"] },
+    "eventDigest": { "type": "string", "minLength": 1 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "phase1-v0.2",
+  "sourceMessages": ["a915fdab", "b4d09086", "94fe7711", "cf5c2faa"],
+  "invariants": {
+    "SPEC-P1-SCOPE-NONDESTRUCTIVE": "Phase 1 proves non-destructive backup plus isolated restore only",
+    "SPEC-P1-JOURNAL-CHAIN": "upm-system create-only immutable ConfigMap events form a hash chain",
+    "SPEC-P1-JOURNAL-APPEND-ONLY": "journal is append-only; no compact or delete in Phase 1",
+    "SPEC-P1-LEASE-NOT-SECURITY": "Lease reduces contention and is not a safety control",
+    "SPEC-P1-RESUME-OR-BLOCKED": "restart is reconcile or resume; unprovable state is BLOCKED",
+    "SPEC-P1-PLANHASH-BINDINGS": "planHash covers identity, facts, actions, risk, budget, and approval policy",
+    "SPEC-P1-APPROVAL-ED25519": "ApprovalEnvelope is Ed25519, 15 minutes, single use",
+    "SPEC-P1-TARGET-FENCE": "first mutation is a resourceVersion JSON Patch fence before Backup create",
+    "SPEC-P1-DRIFT-DURING": "post-backup target mismatch is TARGET_DRIFTED_DURING_OPERATION",
+    "SPEC-P1-ORACLE-AB": "restore must contain set A 1..1000 only and exclude set B 1001..1100",
+    "SPEC-P1-EVIDENCE-SIGN": "EvidenceManifest is signed by the execution key, not the approver key",
+    "SPEC-P1-NO-COMMENT": "authored source and tests have no comment trivia or ignore pragmas",
+    "SPEC-P1-AGENT-NO-PRIVILEGE": "agent has no bash, kubectl, kubeconfig, or database admin credentials"
+  }
+}

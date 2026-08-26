@@ -1,7 +1,7 @@
 # UPM repository — agent entry router
 
-This is the UPM public repository. It holds project documentation and an agent LLM wiki,
-not (yet) product source code. Agents working in this repo start here.
+This is the UPM public repository. It holds project documentation, an agent LLM wiki,
+and the Phase 1 v0.2 BackupProof harness. Agents working in this repo start here.
 
 ## Where things live
 
@@ -9,7 +9,11 @@ not (yet) product source code. Agents working in this repo start here.
 |---|---|---|
 | `docs/` | Project documentation (Cloudflare Nimbus, human-first, also serves agents via `/llms.txt`). | `docs/AGENT.md` |
 | `llm-wiki/` | Agent LLM wiki — Karpathy-style knowledge base of pinned, license-aware external resources. | `llm-wiki/AGENTS.md` |
+| `harness/` | Phase 1 v0.2 BackupProof Domain Harness (TypeScript / Node 22). | `harness/spec/phase1-v0.2-invariants.json` |
 | `scripts/check_llm_wiki.py` | Validator for `llm-wiki/` (content addressing, `--base`, links/sources). | — |
+| `scripts/check_no_comments.ts` | Fail closed on authored comment trivia and ignore pragmas. Shebang allowed. | — |
+| `scripts/check_invariant_ids.ts` | Every `SPEC-P1-*` id must resolve to the invariant catalog. | — |
+| `scripts/check_public_secrets.ts` | Fail closed on private keys and token patterns under harness/scripts. | — |
 
 ## Long-term public-safety principle
 
@@ -37,9 +41,12 @@ and contribute. Follow this from now on:
 Run the checks that exist today:
 
 - `python3 scripts/check_llm_wiki.py .` — LLM wiki validator.
+- `node --experimental-strip-types scripts/check_no_comments.ts .`
+- `node --experimental-strip-types scripts/check_invariant_ids.ts .`
+- `node --experimental-strip-types scripts/check_public_secrets.ts .`
+- From `harness/`: `npm test`
 - From `docs/`: `pnpm run build`, `pnpm run typecheck`, `pnpm run lint:docs`.
 - Secret scan — this repo must never contain a credential. Do not add `.env`,
   `.secret-*`, or any token/password.
 
-Product-code gates (lint, unit, integration, build) will be added once product code
-exists; do not invent an empty pipeline now.
+Do not add comments to UPM TypeScript or tests. Startup pins that are not admitted stay PENDING.

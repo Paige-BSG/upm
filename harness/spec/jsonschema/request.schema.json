@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upm.dev/schema/phase1-v0.2/request.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "operationId", "plan", "planHash", "approval"],
+  "properties": {
+    "apiVersion": { "const": "upm.dev/v0" },
+    "kind": { "const": "BackupProof" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "plan": { "$ref": "plan.json" },
+    "planHash": { "type": "string", "minLength": 1 },
+    "approval": { "$ref": "approval.json" }
+  }
+}

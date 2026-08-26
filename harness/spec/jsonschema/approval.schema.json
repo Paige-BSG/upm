@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upm.dev/schema/phase1-v0.2/approval.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approvalId", "planHash", "approverSubject", "keyId", "issuedAt", "expiresAt", "nonce", "signature"],
+  "properties": {
+    "approvalId": { "type": "string", "minLength": 1 },
+    "planHash": { "type": "string", "minLength": 1 },
+    "approverSubject": { "type": "string", "minLength": 1 },
+    "keyId": { "type": "string", "minLength": 1 },
+    "issuedAt": { "type": "number" },
+    "expiresAt": { "type": "number" },
+    "nonce": { "type": "string", "minLength": 1 },
+    "signature": { "type": "string", "minLength": 1 }
+  }
+}
