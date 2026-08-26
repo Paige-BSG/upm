@@ -1,0 +1,51 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import { config } from "virtual:nimbus/config";
+---
+
+<BaseLayout title={config.title} description={config.description}>
+  <div class="flex flex-col min-h-screen">
+    <Header />
+    <main id="main-content" tabindex="-1" class="flex-1 mx-auto max-w-2xl w-full px-6 py-24">
+      <h1
+        class="text-foreground leading-tight"
+        style="font-size: var(--nb-h1-size); font-weight: var(--nb-h1-weight); letter-spacing: var(--nb-h1-tracking);"
+      >
+        UPM
+      </h1>
+      <p class="mt-2 text-[1.0625rem] text-muted-foreground leading-relaxed">
+        The LLM wiki — a pinned, license-aware library for every external resource and
+        open-source component UPM's repositories reference.
+      </p>
+
+      <div class="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <a
+          href="/index"
+          class="block rounded-lg border border-border p-4 transition-colors hover:border-border-strong no-underline"
+        >
+          <div class="font-medium text-foreground">Wiki index</div>
+          <div class="mt-0.5 text-sm text-muted-foreground">Table of contents</div>
+        </a>
+        <a
+          href="/sources/nimbus-docs"
+          class="block rounded-lg border border-border p-4 transition-colors hover:border-border-strong no-underline"
+        >
+          <div class="font-medium text-foreground">Nimbus Docs</div>
+          <div class="mt-0.5 text-sm text-muted-foreground">Wiki framework</div>
+        </a>
+        <a
+          href="/resources/google-code-wiki"
+          class="block rounded-lg border border-border p-4 transition-colors hover:border-border-strong no-underline"
+        >
+          <div class="font-medium text-foreground">Google Code Wiki</div>
+          <div class="mt-0.5 text-sm text-muted-foreground">Repo understanding layer</div>
+        </a>
+      </div>
+
+      <p class="mt-8 text-sm text-muted-foreground">
+        Read the repo-root <code>AGENTS.md</code> for the ingest / query / lint contract.
+      </p>
+    </main>
+  </div>
+</BaseLayout>

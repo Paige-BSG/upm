@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "base": "/",
+  "knownRoutes": [
+    "/",
+    "/404",
+    "/components/nimbus-docs",
+    "/concepts/karpathy-llm-wiki",
+    "/index",
+    "/log",
+    "/resources/google-code-wiki",
+    "/sources/google-code-wiki",
+    "/sources/karpathy-llm-wiki",
+    "/sources/nimbus-docs"
+  ],
+  "opaqueNamespaces": []
+}

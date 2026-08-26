@@ -1,0 +1,45 @@
+---
+title: UPM
+description: The LLM wiki — a pinned, license-aware library for every external resource and open-source component UPM's repositories reference.
+---
+
+UPM documents each external resource and open-source component its repositories
+reference using the **LLM wiki** knowledge-management paradigm Andrej Karpathy proposed
+in April 2026: an LLM compiles and maintains a persistent, interlinked Markdown library
+that compounds over time, instead of you re-reading a source on every query.
+
+`docs/src/content/docs/` is that library and, at the same time, the Nimbus content tree —
+one directory is both the human/agent-readable wiki and the source for the built site.
+
+## Reading route
+
+- `sources/` — immutable source records: upstream URL, exact tag / commit / digest,
+  fetched date, and license or rights boundary.
+- `components/` — executable or distributable dependencies we use (libraries, tools,
+  models, fonts).
+- `resources/` — external knowledge we rely on (specs, documentation sites, services,
+  papers).
+- `concepts/` — recurring concepts and paradigms.
+- `log.md` — append-only ingest / query / lint timeline.
+
+## Current records
+
+The initial three ingests:
+
+- [`sources/nimbus-docs`](/sources/nimbus-docs) — the framework UPM's wiki site is built on
+  (republished as [`components/nimbus-docs`](/components/nimbus-docs)).
+- [`sources/karpathy-llm-wiki`](/sources/karpathy-llm-wiki) — the knowledge-management
+  paradigm UPM follows (republished as [`concepts/karpathy-llm-wiki`](/concepts/karpathy-llm-wiki)).
+- [`sources/google-code-wiki`](/sources/google-code-wiki) — auxiliary understanding layer
+  for public GitHub repos (republished as [`resources/google-code-wiki`](/resources/google-code-wiki)).
+
+## Contract
+
+The repo-root `AGENTS.md` defines the three operations (ingest / query / lint) and the
+admission contract for external resources. Every claim in this wiki traces to a source
+record under `sources/`; a version change never rewrites history, it adds a revision.
+
+## Ownership
+
+- Owner: `@DeepSeek`
+- Last verified: 2026-08-27
