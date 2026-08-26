@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { executeBackupProof } from "../src/execute.ts";
 import { replayJournal } from "../src/journal.ts";
-import { evaluateOracle, setA, setB } from "../src/oracle.ts";
+import { evaluateOracle, FIXED_SCHEMA, setA, setB } from "../src/oracle.ts";
 import { integrationPinsReady } from "../src/pins.ts";
 import { verifyCanonical } from "../src/signature.ts";
 import {
@@ -60,13 +60,13 @@ test(`${SPEC_P1_SCOPE_NONDESTRUCTIVE} isolated restore keeps set A only`, () => 
   assert.equal(result.ok, true);
   assert.equal(result.record.evidence?.oracle.count, 1000);
   assert.equal(result.record.evidence?.oracle.setBAbsent, true);
-  assert.equal(evaluateOracle(cluster.snapshotRows("src", "source-db") ?? []).pass, false);
+  assert.equal(evaluateOracle(cluster.snapshotRows("src", "source-db") ?? [], { ...FIXED_SCHEMA }).pass, false);
 });
 
 test(`${SPEC_P1_ORACLE_AB} ordered-row hash matches set A and excludes set B`, () => {
   const { result } = run();
-  assert.equal(result.record.evidence?.oracle.orderedRowHash, evaluateOracle(setA()).orderedRowHash);
-  assert.equal(evaluateOracle([...setA(), ...setB()]).pass, false);
+  assert.equal(result.record.evidence?.oracle.orderedRowHash, evaluateOracle(setA(), { ...FIXED_SCHEMA }).orderedRowHash);
+  assert.equal(evaluateOracle([...setA(), ...setB()], { ...FIXED_SCHEMA }).pass, false);
 });
 
 test(`${SPEC_P1_PLANHASH_BINDINGS} outer operationId mismatch is denied`, () => {
@@ -121,8 +121,15 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} consumed approval resumes after expiry`, () =
   const keys = makeKeys();
   const first = run(1_000_000, { cluster, keys, crashAfter: "ApprovalConsumed" });
   assert.equal(first.result.ok, false);
-  const second = run(1_000_000 + 16 * 60 * 1000, { cluster, keys });
-  assert.equal(second.result.ok, true);
+  const second = executeBackupProof({
+    request: first.request,
+    agent: SAFE_AGENT,
+    actor: ACTOR,
+    cluster,
+    keys: first.keys.trusted,
+    nowMs: 1_000_000 + 16 * 60 * 1000,
+  });
+  assert.equal(second.ok, true);
 });
 
 test(`${SPEC_P1_RESUME_OR_BLOCKED} FenceSet crash resumes instead of DRIFT`, () => {
@@ -193,14 +200,14 @@ test(`${SPEC_P1_JOURNAL_CHAIN} replayed evidence is idempotent`, () => {
   assert.equal(first.result.ok, true);
   assert.equal(second.result.replayed, true);
   assert.deepEqual(second.result.record.evidence, first.result.record.evidence);
-  replayJournal(cluster.listJournal());
+  replayJournal(cluster.listJournal(ACTOR));
 });
 
 test(`${SPEC_P1_RESUME_OR_BLOCKED} tampered journal is BLOCKED`, () => {
   const cluster = liveCluster();
   const keys = makeKeys();
   run(1_000_000, { cluster, keys });
-  cluster.listJournal()[0]!.eventDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  cluster.listJournal(ACTOR)[0]!.eventDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   const again = run(1_000_000, { cluster, keys });
   assert.equal(again.result.denial, "BLOCKED");
 });
@@ -208,7 +215,7 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} tampered journal is BLOCKED`, () => {
 test(`${SPEC_P1_LEASE_NOT_SECURITY} a live foreign lease only contends`, () => {
   const cluster = liveCluster();
   cluster.nowMs = 1_000_000;
-  assert.equal(cluster.acquireLease("other-writer"), true);
+  assert.equal(cluster.acquireLease(ACTOR, "other-writer"), true);
   const { result } = run(1_000_000, { cluster });
   assert.equal(result.denial, "LEASE_CONTENDED");
 });
@@ -250,8 +257,11 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} crash at each write-ahead and create boundary
     "IntentAccepted",
     "BackupWriteAhead",
     "BackupCreated",
+    "FenceWriteAhead",
     "RestoreWriteAhead",
+    "RestoreClusterCreated",
     "RestoreCreated",
+    "FenceReleaseWriteAhead",
   ] as const) {
     const cluster = liveCluster();
     const keys = makeKeys();
@@ -274,3 +284,4 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} missing backup after create is BLOCKED`, () =
   const again = run(1_000_000, { cluster, keys });
   assert.equal(again.result.denial, "BLOCKED");
 });
+

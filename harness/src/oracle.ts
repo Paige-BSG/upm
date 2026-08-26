@@ -6,6 +6,11 @@ void SPEC_P1_ORACLE_AB;
 
 export type OracleRow = { id: number; payload: string };
 
+export const FIXED_SCHEMA = {
+  table: "backup_proof_items",
+  columns: "id BIGINT PRIMARY KEY,payload VARCHAR(64) NOT NULL",
+} as const;
+
 export function rowPayload(id: number): string {
   return createHash("sha256").update(`backup_proof_items:${id}`, "utf8").digest("hex");
 }
@@ -28,22 +33,16 @@ export function orderedRowHash(rows: OracleRow[]): string {
   return sha256Canonical([...rows].sort((left, right) => left.id - right.id));
 }
 
-export function schemaDigest(): string {
-  return sha256Canonical({
-    table: "backup_proof_items",
-    columns: [
-      { name: "id", type: "BIGINT", primaryKey: true },
-      { name: "payload", type: "VARCHAR(64)", nullable: false },
-    ],
-  });
+export function schemaMatchesFixed(observedSchema: Record<string, string> | undefined): boolean {
+  if (!observedSchema) {
+    return false;
+  }
+  return sha256Canonical(observedSchema) === sha256Canonical(FIXED_SCHEMA);
 }
 
 export function evaluateOracle(
   rows: OracleRow[],
-  observedSchema: Record<string, string> = {
-    table: "backup_proof_items",
-    columns: "id BIGINT PRIMARY KEY,payload VARCHAR(64) NOT NULL",
-  },
+  observedSchema: Record<string, string> | undefined,
 ): {
   schemaDigest: string;
   count: number;
@@ -56,7 +55,9 @@ export function evaluateOracle(
   const ids = rows.map((row) => row.id).sort((left, right) => left - right);
   const expected = setA();
   const setBAbsent = rows.every((row) => row.id <= 1000);
+  const schemaOk = schemaMatchesFixed(observedSchema);
   const pass =
+    schemaOk &&
     rows.length === 1000 &&
     ids[0] === 1 &&
     ids[999] === 1000 &&
@@ -64,7 +65,7 @@ export function evaluateOracle(
     orderedRowHash(rows) === orderedRowHash(expected) &&
     setBAbsent;
   return {
-    schemaDigest: sha256Canonical(observedSchema),
+    schemaDigest: observedSchema ? sha256Canonical(observedSchema) : "",
     count: rows.length,
     primaryKeyMin: ids[0] ?? 0,
     primaryKeyMax: ids[ids.length - 1] ?? 0,

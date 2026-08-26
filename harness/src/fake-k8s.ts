@@ -1,4 +1,4 @@
-import { setA, setB, type OracleRow } from "./oracle.ts";
+import { setA, setB, FIXED_SCHEMA, type OracleRow } from "./oracle.ts";
 import { actorMay } from "./rbac.ts";
 import { sha256Canonical } from "./rfc8785.ts";
 import {
@@ -53,8 +53,10 @@ function key(namespace: string, kind: string, name: string): string {
 export class FakeK8s {
   mode: FakeMode = "ok";
   nowMs = 0;
+  apiElapsedMs = 0;
   forceDriftAfterBackup = false;
   failFenceRelease = false;
+  failRenew = false;
   clusterUid = "cluster-uid-1";
   namespaceUids: Record<string, string> = { src: "ns-src", dst: "ns-dst", "upm-system": "ns-upm" };
   readonly objects = new Map<string, CrObject>();
@@ -63,6 +65,19 @@ export class FakeK8s {
   private nextVersion(): string {
     this.versions += 1;
     return String(this.versions);
+  }
+
+  private guard(): void {
+    this.nowMs += this.apiElapsedMs;
+    if (this.mode === "fail") {
+      throw new AdapterFailureError("ADAPTER_FAILURE");
+    }
+    if (this.mode === "timeout") {
+      throw new AdapterTimeoutError("TIMEOUT");
+    }
+    if (this.mode === "unauthorized") {
+      throw new AdapterUnauthorizedError("UNAUTHORIZED");
+    }
   }
 
   seedMysql(target: TargetRef, rows: OracleRow[] = setA()): CrObject {
@@ -77,17 +92,14 @@ export class FakeK8s {
       specDigest: target.specDigest,
       spec: { clusterType: "group-replication" },
       rows: rows.map((row) => ({ ...row })),
-      observedSchema: {
-        table: "backup_proof_items",
-        columns: "id BIGINT PRIMARY KEY,payload VARCHAR(64) NOT NULL",
-      },
+      observedSchema: { ...FIXED_SCHEMA },
     };
     this.objects.set(key(target.namespace, object.kind, object.name), object);
     return object;
   }
 
   get(actor: Actor, kind: CrObject["kind"], namespace: string, name: string): CrObject | undefined {
-    if (!actorMay(actor, namespace, kind)) {
+    if (!actorMay(actor, namespace, kind, "get")) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     return this.objects.get(key(namespace, kind, name));
@@ -95,7 +107,7 @@ export class FakeK8s {
 
   create(actor: Actor, object: CrObject): CrObject {
     this.guard();
-    if (!actorMay(actor, object.namespace, object.kind)) {
+    if (!actorMay(actor, object.namespace, object.kind, "create")) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     const existing = this.objects.get(key(object.namespace, object.kind, object.name));
@@ -111,27 +123,8 @@ export class FakeK8s {
     if (object.rows) {
       stored.rows = object.rows.map((row) => ({ ...row }));
     }
-    this.objects.set(key(stored.namespace, stored.kind, stored.name), stored);
-    return stored;
-  }
-
-  replace(object: CrObject): CrObject {
-    this.guard();
-    const current = this.objects.get(key(object.namespace, object.kind, object.name));
-    if (!current) {
-      throw new AdapterFailureError("MISSING");
-    }
-    if (current.immutable) {
-      throw new AdapterConflictError("IMMUTABLE");
-    }
-    const stored: CrObject = {
-      ...object,
-      annotations: { ...object.annotations },
-      spec: { ...object.spec },
-      resourceVersion: this.nextVersion(),
-    };
-    if (object.rows) {
-      stored.rows = object.rows.map((row) => ({ ...row }));
+    if (object.observedSchema) {
+      stored.observedSchema = { ...object.observedSchema };
     }
     this.objects.set(key(stored.namespace, stored.kind, stored.name), stored);
     return stored;
@@ -139,7 +132,7 @@ export class FakeK8s {
 
   patchFence(actor: Actor, target: TargetRef, fence: string): CrObject {
     this.guard();
-    if (!actorMay(actor, target.namespace, "PerconaServerMySQL")) {
+    if (!actorMay(actor, target.namespace, "PerconaServerMySQL", "patch")) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     const current = this.objects.get(key(target.namespace, "PerconaServerMySQL", target.name));
@@ -159,7 +152,7 @@ export class FakeK8s {
 
   releaseFence(actor: Actor, target: TargetRef, fence: string): CrObject {
     this.guard();
-    if (!actorMay(actor, target.namespace, "PerconaServerMySQL")) {
+    if (!actorMay(actor, target.namespace, "PerconaServerMySQL", "patch")) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     if (this.failFenceRelease) {
@@ -204,7 +197,14 @@ export class FakeK8s {
     return current.rows.map((row) => ({ ...row }));
   }
 
-  renewLease(holder: string): void {
+  renewLease(actor: Actor, holder: string): void {
+    this.guard();
+    if (!actorMay(actor, CONTROL_NAMESPACE, "Lease", "update")) {
+      throw new AdapterUnauthorizedError("UNAUTHORIZED");
+    }
+    if (this.failRenew) {
+      throw new Error("LEASE_CONTENDED");
+    }
     const existing = this.objects.get(key(CONTROL_NAMESPACE, "Lease", WRITER_LEASE_NAME));
     if (!existing || existing.leaseHolder !== holder) {
       throw new Error("LEASE_CONTENDED");
@@ -212,8 +212,12 @@ export class FakeK8s {
     existing.leaseUntil = this.nowMs + LEASE_DURATION_MS;
   }
 
-  acquireLease(holder: string): boolean {
+  acquireLease(actor: Actor, holder: string): boolean {
     void SPEC_P1_LEASE_NOT_SECURITY;
+    this.guard();
+    if (!actorMay(actor, CONTROL_NAMESPACE, "Lease", "create") && !actorMay(actor, CONTROL_NAMESPACE, "Lease", "update")) {
+      throw new AdapterUnauthorizedError("UNAUTHORIZED");
+    }
     const existing = this.objects.get(key(CONTROL_NAMESPACE, "Lease", WRITER_LEASE_NAME));
     if (existing && existing.leaseHolder && existing.leaseHolder !== holder && (existing.leaseUntil ?? 0) > this.nowMs) {
       return false;
@@ -247,23 +251,15 @@ export class FakeK8s {
     }
   }
 
-  listJournal(): JournalEvent[] {
+  listJournal(actor: Actor): JournalEvent[] {
+    this.guard();
+    if (!actorMay(actor, CONTROL_NAMESPACE, "ConfigMap", "list")) {
+      throw new AdapterUnauthorizedError("UNAUTHORIZED");
+    }
     return [...this.objects.values()]
       .filter((object) => object.kind === "ConfigMap" && object.event)
       .map((object) => object.event as JournalEvent)
       .sort((left, right) => left.sequence - right.sequence);
-  }
-
-  private guard(): void {
-    if (this.mode === "fail") {
-      throw new AdapterFailureError("ADAPTER_FAILURE");
-    }
-    if (this.mode === "timeout") {
-      throw new AdapterTimeoutError("TIMEOUT");
-    }
-    if (this.mode === "unauthorized") {
-      throw new AdapterUnauthorizedError("UNAUTHORIZED");
-    }
   }
 }
 

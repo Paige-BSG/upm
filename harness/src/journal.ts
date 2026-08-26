@@ -19,12 +19,15 @@ void SPEC_P1_RESUME_OR_BLOCKED;
 const NEXT: Record<JournalPhase, readonly JournalEventType[]> = {
   empty: ["IntentAccepted"],
   intent: ["ApprovalConsumed"],
-  approved: ["FenceSet"],
+  approved: ["FenceWriteAhead"],
+  fence_wa: ["FenceSet"],
   fenced: ["BackupWriteAhead"],
   backup_wa: ["BackupCreated"],
   backed_up: ["RestoreWriteAhead"],
-  restore_wa: ["RestoreCreated"],
-  restored: ["EvidenceClosed", "FenceReleaseBlocked"],
+  restore_wa: ["RestoreClusterCreated"],
+  restore_cluster: ["RestoreCreated"],
+  restored: ["FenceReleaseWriteAhead"],
+  fence_rel_wa: ["EvidenceClosed", "FenceReleaseBlocked"],
   closed: [],
   fence_blocked: [],
   blocked: [],
@@ -65,6 +68,8 @@ export function reduceJournal(events: JournalEvent[]): JournalPhase {
       phase = "intent";
     } else if (event.type === "ApprovalConsumed") {
       phase = "approved";
+    } else if (event.type === "FenceWriteAhead") {
+      phase = "fence_wa";
     } else if (event.type === "FenceSet") {
       phase = "fenced";
     } else if (event.type === "BackupWriteAhead") {
@@ -73,8 +78,12 @@ export function reduceJournal(events: JournalEvent[]): JournalPhase {
       phase = "backed_up";
     } else if (event.type === "RestoreWriteAhead") {
       phase = "restore_wa";
+    } else if (event.type === "RestoreClusterCreated") {
+      phase = "restore_cluster";
     } else if (event.type === "RestoreCreated") {
       phase = "restored";
+    } else if (event.type === "FenceReleaseWriteAhead") {
+      phase = "fence_rel_wa";
     } else if (event.type === "EvidenceClosed") {
       phase = "closed";
     } else if (event.type === "FenceReleaseBlocked") {
@@ -108,8 +117,8 @@ export function appendEvent(
   if (!cluster.leaseLive(actor.actorId)) {
     throw new Error("LEASE_CONTENDED");
   }
-  cluster.renewLease(actor.actorId);
-  const existing = cluster.listJournal().filter((event) => event.operationId === operationId);
+  cluster.renewLease(actor, actor.actorId);
+  const existing = cluster.listJournal(actor).filter((event) => event.operationId === operationId);
   const phase = reduceJournal(existing);
   if (!NEXT[phase].includes(type)) {
     throw new Error("BLOCKED");

@@ -4,12 +4,12 @@ import { sha256Canonical } from "../src/rfc8785.ts";
 import { generateEd25519, signApproval } from "../src/signature.ts";
 import {
   CLUSTER_TYPE,
-  CONTROL_KINDS,
-  PERCONA_KINDS,
+  CONTROL_NAMESPACE,
   SCHEMA_VERSION,
   type Actor,
   type AgentCapabilities,
   type BackupProofRequest,
+  type Permission,
   type PlanDocument,
   type TargetRef,
 } from "../src/types.ts";
@@ -21,11 +21,20 @@ export const SAFE_AGENT: AgentCapabilities = {
   dbAdmin: false,
 };
 
+export function writerRules(sourceNs: string, restoreNs: string): Permission[] {
+  return [
+    { namespace: sourceNs, kind: "PerconaServerMySQL", verbs: ["get", "patch"] },
+    { namespace: sourceNs, kind: "PerconaServerMySQLBackup", verbs: ["get", "create"] },
+    { namespace: restoreNs, kind: "PerconaServerMySQL", verbs: ["get", "create"] },
+    { namespace: restoreNs, kind: "PerconaServerMySQLRestore", verbs: ["get", "create"] },
+    { namespace: CONTROL_NAMESPACE, kind: "ConfigMap", verbs: ["get", "create", "list"] },
+    { namespace: CONTROL_NAMESPACE, kind: "Lease", verbs: ["get", "create", "update"] },
+  ];
+}
+
 export const ACTOR: Actor = {
   actorId: "writer-1",
-  namespaces: ["src", "dst", "upm-system"],
-  kinds: PERCONA_KINDS,
-  controlKinds: CONTROL_KINDS,
+  rules: writerRules("src", "dst"),
 };
 
 export const TARGET: TargetRef = {

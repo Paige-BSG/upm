@@ -14,15 +14,6 @@ function encodeString(value: string): string {
   let out = '"';
   for (let index = 0; index < value.length; index += 1) {
     const unit = value.charCodeAt(index);
-    const mapped = ESCAPE[unit];
-    if (mapped !== undefined) {
-      out += mapped;
-      continue;
-    }
-    if (unit < 0x20) {
-      out += `\\u${unit.toString(16).padStart(4, "0")}`;
-      continue;
-    }
     if (unit >= 0xd800 && unit <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
       if (next >= 0xdc00 && next <= 0xdfff) {
@@ -31,10 +22,17 @@ function encodeString(value: string): string {
         index += 1;
         continue;
       }
-      out += `\\u${unit.toString(16).padStart(4, "0")}`;
-      continue;
+      throw new Error("RFC8785_STRING");
     }
     if (unit >= 0xdc00 && unit <= 0xdfff) {
+      throw new Error("RFC8785_STRING");
+    }
+    const mapped = ESCAPE[unit];
+    if (mapped !== undefined) {
+      out += mapped;
+      continue;
+    }
+    if (unit < 0x20) {
       out += `\\u${unit.toString(16).padStart(4, "0")}`;
       continue;
     }
@@ -51,6 +49,18 @@ function encodeNumber(value: number): string {
     return "0";
   }
   return String(value);
+}
+
+function compareUtf16(left: string, right: string): number {
+  const max = Math.min(left.length, right.length);
+  for (let index = 0; index < max; index += 1) {
+    const a = left.charCodeAt(index);
+    const b = right.charCodeAt(index);
+    if (a !== b) {
+      return a < b ? -1 : 1;
+    }
+  }
+  return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
 }
 
 export function canonicalize(value: unknown): string {
@@ -71,7 +81,7 @@ export function canonicalize(value: unknown): string {
   }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    const keys = Object.keys(record).sort(compareUtf16);
     return `{${keys.map((key) => `${encodeString(key)}:${canonicalize(record[key])}`).join(",")}}`;
   }
   throw new Error("RFC8785_TYPE");

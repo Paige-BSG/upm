@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upm.dev/schema/phase1-v0.2/evidence.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "schemaVersion",
+    "operationId",
+    "planHash",
+    "actor",
+    "clusterUid",
+    "sourceNamespace",
+    "restoreNamespace",
+    "targetPre",
+    "targetPost",
+    "approval",
+    "journalRoot",
+    "journalHead",
+    "backupArtifactId",
+    "backupArtifactDigest",
+    "observedSchemaDigest",
+    "artifactDigest",
+    "oracle",
+    "driftedDuring",
+    "verdict",
+    "pinsDigest",
+    "keyId",
+    "signature"
+  ],
+  "properties": {
+    "apiVersion": { "const": "upm.dev/v0" },
+    "kind": { "const": "BackupProofEvidence" },
+    "schemaVersion": { "const": "phase1-v0.2" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "planHash": { "type": "string", "minLength": 1 },
+    "actor": { "type": "string", "minLength": 1 },
+    "clusterUid": { "type": "string", "minLength": 1 },
+    "sourceNamespace": { "type": "string", "minLength": 1 },
+    "restoreNamespace": { "type": "string", "minLength": 1 },
+    "targetPre": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "name", "uid", "generation", "resourceVersion", "specDigest"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "uid": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "resourceVersion": { "type": "string", "minLength": 1 },
+        "specDigest": { "type": "string", "minLength": 1 }
+      }
+    },
+    "targetPost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "name", "uid", "generation", "resourceVersion", "specDigest"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "uid": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "resourceVersion": { "type": "string", "minLength": 1 },
+        "specDigest": { "type": "string", "minLength": 1 }
+      }
+    },
+    "approval": { "$ref": "approval.json" },
+    "journalRoot": { "type": "string", "minLength": 1 },
+    "journalHead": { "type": "string", "minLength": 1 },
+    "backupArtifactId": { "type": "string", "minLength": 1 },
+    "backupArtifactDigest": { "type": "string", "minLength": 1 },
+    "observedSchemaDigest": { "type": "string", "minLength": 1 },
+    "artifactDigest": { "type": "string", "minLength": 1 },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaDigest", "count", "primaryKeyMin", "primaryKeyMax", "orderedRowHash", "setBAbsent"],
+      "properties": {
+        "schemaDigest": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 0 },
+        "primaryKeyMin": { "type": "integer" },
+        "primaryKeyMax": { "type": "integer" },
+        "orderedRowHash": { "type": "string", "minLength": 1 },
+        "setBAbsent": { "type": "boolean" }
+      }
+    },
+    "driftedDuring": { "type": "boolean" },
+    "verdict": { "type": "string", "minLength": 1 },
+    "pinsDigest": { "type": "string", "minLength": 1 },
+    "keyId": { "type": "string", "minLength": 1 },
+    "signature": { "type": "string", "minLength": 1 }
+  }
+}

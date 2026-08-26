@@ -16,13 +16,16 @@ export const SPEC_P1_AGENT_NO_PRIVILEGE = requireInvariant("SPEC-P1-AGENT-NO-PRI
 
 export const API_VERSION = "upm.dev/v0" as const;
 export const BACKUP_PROOF_KIND = "BackupProof" as const;
+export const EVIDENCE_KIND = "BackupProofEvidence" as const;
 export const CLUSTER_TYPE = "group-replication" as const;
 export const CONTROL_NAMESPACE = "upm-system" as const;
 export const WRITER_LEASE_NAME = "upm-backupproof-writer" as const;
 export const FENCE_ANNOTATION = "upm.io/backup-proof-fence" as const;
 export const APPROVAL_TTL_MS = 15 * 60 * 1000;
 export const LEASE_DURATION_MS = 30_000;
+export const LEASE_RENEW_MS = 10_000;
 export const SCHEMA_VERSION = "phase1-v0.2" as const;
+export const PHASE1_BUDGET = "size=1" as const;
 
 export const PERCONA_KINDS = [
   "PerconaServerMySQL",
@@ -31,10 +34,12 @@ export const PERCONA_KINDS = [
 ] as const;
 
 export const CONTROL_KINDS = ["ConfigMap", "Lease"] as const;
+export const VERBS = ["get", "create", "list", "patch", "update"] as const;
 
 export type PerconaKind = (typeof PERCONA_KINDS)[number];
 export type ControlKind = (typeof CONTROL_KINDS)[number];
 export type ResourceKind = PerconaKind | ControlKind;
+export type Verb = (typeof VERBS)[number];
 
 export type AgentCapabilities = {
   bash: boolean;
@@ -43,11 +48,15 @@ export type AgentCapabilities = {
   dbAdmin: boolean;
 };
 
+export type Permission = {
+  namespace: string;
+  kind: ResourceKind;
+  verbs: readonly Verb[];
+};
+
 export type Actor = {
   actorId: string;
-  namespaces: readonly string[];
-  kinds: readonly PerconaKind[];
-  controlKinds: readonly ControlKind[];
+  rules: readonly Permission[];
 };
 
 export type TargetRef = {
@@ -121,11 +130,14 @@ export type DenialCode =
 export type JournalEventType =
   | "IntentAccepted"
   | "ApprovalConsumed"
+  | "FenceWriteAhead"
   | "FenceSet"
   | "BackupWriteAhead"
   | "BackupCreated"
   | "RestoreWriteAhead"
+  | "RestoreClusterCreated"
   | "RestoreCreated"
+  | "FenceReleaseWriteAhead"
   | "EvidenceClosed"
   | "FenceReleaseBlocked";
 
@@ -133,11 +145,14 @@ export type JournalPhase =
   | "empty"
   | "intent"
   | "approved"
+  | "fence_wa"
   | "fenced"
   | "backup_wa"
   | "backed_up"
   | "restore_wa"
+  | "restore_cluster"
   | "restored"
+  | "fence_rel_wa"
   | "closed"
   | "fence_blocked"
   | "blocked";
@@ -153,6 +168,9 @@ export type JournalEvent = {
 };
 
 export type EvidenceManifest = {
+  apiVersion: typeof API_VERSION;
+  kind: typeof EVIDENCE_KIND;
+  schemaVersion: typeof SCHEMA_VERSION;
   operationId: string;
   planHash: string;
   actor: string;
