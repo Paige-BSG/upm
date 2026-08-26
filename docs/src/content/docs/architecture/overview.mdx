@@ -1,0 +1,54 @@
+---
+title: Architecture
+description: The intended architecture for UPM — an AI-native data-service ops control plane with a deterministic execution core.
+---
+
+This page is the **intended** design for UPM. No product source code has been released
+into this public repository yet, so treat this as the direction, not a description of a
+shipped artifact.
+
+## The core idea
+
+UPM manages databases and middleware on Kubernetes with an **in-product agent as a
+first-class operator**. A human expresses intent; the agent plans; a domain harness
+(security contract) gates it; deterministic operators make the change. The control plane
+is deterministic because the thing that changes data is always a real operator, never the
+agent acting through a shell.
+
+## Three layers
+
+1. **Agent / intent** — an in-product agent built on the **Pi Agent** runtime
+   (`earendil-works/pi`, MIT). It provides the agent loop, tool calling, message/state and
+   event streaming, and an abstract model layer (`@earendil-works/pi-ai`) so UPM is not
+   bound to one model. Importantly, UPM does **not** reuse the coding agent's `bash`,
+   file, and process permissions in production: in-product the agent sees only the
+   minimal, low-privilege domain tools the harness exposes.
+
+2. **Domain harness (spelled by UPM)** — the security contract around intent: typed
+   database / Kubernetes tools, a realtime fact snapshot of the target, permissions,
+   risk-tiering, approval, idempotency, timeouts, evidence, and audit. The agent reasons
+   and orchestrates; the harness enforces boundaries. It is the boundary that keeps the
+   agent from reaching a kubeconfig, a shell, or raw database credentials directly.
+
+3. **Deterministic execution** — the underlying open-source operators / controllers that
+   actually carry out backup, restore, failover, and upgrade. The agent may plan and
+   request; the harness gates; the deterministic controllers commit the change.
+
+## Boundaries
+
+- **Adopt Pi runtime, not Pi coding-agent permissions.** Pi's core has no built-in
+  permission system; it inherits the launcher's. UPM therefore provides the production
+  permission model in its harness; in-product the agent defaults to the smallest-scoped
+  domain tools, not cluster-admin access.
+- **The first proof** is the agent → plan → approval → backup → isolated restore →
+  evidence loop on these three layers. It is a validation, not a release.
+- Future components (the specific CRDs and manifest shapes) are **not** fixed by this
+  page. They are decided in later phases and recorded here only once agreed; the design
+  holds today, the component names do not.
+
+## Where the detail lives
+
+The LLM wiki (`llm-wiki/` in this repository) pins the external resources and
+open-source components this project references or compares against — the Pi agent,
+operators, package charts, and datastore engines. Read it for the pinned, license-aware
+technical ledger. This docs site is the human-oriented summary.

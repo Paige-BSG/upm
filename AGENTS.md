@@ -1,61 +1,45 @@
-# UPM Agent Knowledge Contract
+# UPM repository — agent entry router
 
-UPM's **LLM wiki** lives in `docs/src/content/docs/` — it is simultaneously Andrej
-Karpathy's LLM-compiled wiki and Nimbus's content tree. It holds a pinned,
-license-aware record + derived summary for every external resource and
-open-source component our repositories reference.
+This is the UPM public repository. It holds project documentation and an agent LLM wiki,
+not (yet) product source code. Agents working in this repo start here.
 
-The **source of truth** for a dependency is the committed wiki page + source
-record in this repo, not a dynamic webpage or a Code Wiki generated view.
+## Where things live
 
-## Three operations
+| Path | What it is | Its own contract |
+|---|---|---|
+| `docs/` | Project documentation (Cloudflare Nimbus, human-first, also serves agents via `/llms.txt`). | `docs/AGENT.md` |
+| `llm-wiki/` | Agent LLM wiki — Karpathy-style knowledge base of pinned, license-aware external resources. | `llm-wiki/AGENTS.md` |
+| `scripts/check_llm_wiki.py` | Validator for `llm-wiki/` (content addressing, `--base`, links/sources). | — |
 
-### 1. Ingest
+## Long-term public-safety principle
 
-- Choose a first-hand source (repo, docs site, paper, gist, service).
-- Add an **immutable source record** under `sources/` with the exact reference:
-  upstream URL, exact tag / commit / digest, fetched date, and license / rights
-  boundary.
-- Confirm the key points with the human.
-- Create or update the derived page(s): `components/` for executable or
-  distributable dependencies, `resources/` for external knowledge, `concepts/`
-  for recurring ideas. Add cross-links.
-- Update `index.mdx` and append to `log.md`.
+The whole point of a public repo is that external users can build, understand, verify,
+and contribute. Follow this from now on:
 
-**Never mutate a historical source record.** An upstream change is a **new
-revision** record, never an overwrite of an old one.
+- **Always public** — source code, docs, decisions, release evidence.
+- **Never in this repo** — credentials, customer data, internal conversations,
+  undisclosed commercial information, `.secret-*` files, passwords, tokens.
+- The standalone LLM wiki collects only **public-safe** technical knowledge. Internal
+  context never enters this repository.
 
-### 2. Query
+## Branching and pull requests
 
-- Read the index first, then the relevant derived pages and source records.
-- Cite the specific source record for every claim.
-- Analyses worth keeping are written back to the wiki **only after human
-  confirmation**; chat conclusions never auto-become facts.
+- `main` is the only long-lived release line. No long-lived `develop`.
+- No direct push to `main`. Work on a short feature branch, open a pull request, and let
+  an independent reviewer (another person or agent, recorded in Raft) say GO before
+  merge.
+- No force-push or deletion of `main`; linear history.
+- Squash-merge; a PR becomes one clear commit on `main`. Releases are immutable `v*` tags
+  created only from checked-in commits on `main`.
 
-### 3. Lint
+## Before opening a PR
 
-- Fix contradictions, stale conclusions, orphan pages, missing backlinks,
-  important concepts with no page, unsourced claims, dead links, and
-  real manifest / lockfile pins that disagree with the wiki.
+Run the checks that exist today:
 
-## Admission contract (external resource / open-source component)
+- `python3 scripts/check_llm_wiki.py .` — LLM wiki validator.
+- From `docs/`: `pnpm run build`, `pnpm run typecheck`, `pnpm run lint:docs`.
+- Secret scan — this repo must never contain a credential. Do not add `.env`,
+  `.secret-*`, or any token/password.
 
-A dependency is admitted only when a single change contains all of:
-
-1. a **raw source record** (`sources/`): official URL, exact tag/commit/digest,
-   fetched date, license / rights boundary;
-2. a **derived wiki page** (`components/` or `resources/`): why it is used, the
-   real integration surface, what is explicitly **not** used, compatibility /
-   security / privacy / distribution / upgrade risk, and the upgrade trigger;
-3. a **correspondence** to the real manifest / lockfile version pin.
-
-Missing any of the three means **not admitted**. Models, datasets, and fonts are
-reviewed for rights separately — never reuse the code license. Third-party
-originals are redistributed only if licensed for it; otherwise keep the immutable
-identity record plus our own summary, not the upstream file.
-
-## Out of scope this round
-
-- No Cloudflare zone / AI Search / MCP wiring.
-- No non-official Code Wiki CLI.
-- No deployment (`wrangler deploy`) — astro config site URL is a placeholder.
+Product-code gates (lint, unit, integration, build) will be added once product code
+exists; do not invent an empty pipeline now.

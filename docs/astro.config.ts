@@ -12,7 +12,7 @@ const nimbusConfig = defineNimbusConfig({
   // Project name — used for <title>, the home H1, and OG.
   title: "UPM",
   // One-line description — used for meta + OG.
-  description: "The LLM wiki — a pinned, license-aware library for every external resource and open-source component UPM's repositories reference.",
+  description: "Public documentation for UPM — an open-source project to manage databases and middleware on Kubernetes.",
   locale: "en",
   github: "https://github.com/Paige-BSG/upm",
   socialImageAlt: "UPM documentation preview",

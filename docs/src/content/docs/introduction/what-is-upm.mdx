@@ -1,0 +1,59 @@
+---
+title: What is UPM?
+description: UPM is an AI-native data-service ops control plane for Kubernetes.
+---
+
+UPM is an **AI-native data-service ops control plane**: an open-source project to manage
+**databases and middleware** on Kubernetes. It is designed so that an in-product **agent
+is a first-class operator** — a human expresses intent, and a deterministic control plane
+executes it safely.
+
+The approach is a fresh, public, AI-native rebuild. It does not import a prior codebase
+into this repository; the earlier project is public reference material only.
+
+## The three layers
+
+From day one the product is designed as three layers:
+
+1. **Agent / intent** — an in-product agent that takes a goal. UPM adopts the **Pi Agent**
+   runtime (`earendil-works/pi`, MIT) for the agent loop, tool calling, and model
+   abstraction, but it does **not** carry a coding agent's `bash`, file, or process
+   permissions into production. The agent sees only the minimal, low-privilege domain
+   tools UPM exposes; it cannot reach a kubeconfig, a shell, or raw database credentials
+   past the harness.
+2. **Domain harness** — the **security contract** around that intent: typed database and
+   Kubernetes tools, a realtime fact snapshot, permissions, risk-tiering, approval,
+   idempotency, timeouts, evidence, and audit. The agent reasons and orchestrates; UPM
+   holds the safety contract.
+3. **Deterministic execution** — open-source operators and controllers that actually
+   perform the change: backup, restore, failover, upgrade. Pi is responsible for
+   reasoning and orchestration; the deterministic controllers are responsible for
+   changing data.
+
+## Why it exists
+
+Our company already ships a product for data-service operations
+([upmio](https://github.com/upmio)). Its public repository is the **reference for the
+problem space and the operator experience** — what the workflows are, where they are
+painful, and how operators think. UPM is the AI-native, deterministic rebuild of that
+space. The earlier codebase is public reference material; it is not being moved into this
+repository.
+
+The comparison baseline is [KubeBlocks](https://github.com/apecloud/kubeblocks), a
+well-known open-source project in the same space. UPM is an AI-native alternative to it,
+not a redeployment of it. The KubeBlocks OSS / Enterprise distinction is recorded
+neutrally in the [related projects](/reference/related-projects#kubeblocks) reference.
+
+## What it operates
+
+- Databases — e.g. MySQL, PostgreSQL style engines.
+- Middleware — e.g. Redis, Kafka.
+- The lifecycle around them — provisioning, configuration, scaling, upgrade, backup and
+  restore, and failover.
+
+## Getting precise information
+
+The highest-value, most up-to-date technical detail for agents is in the separate LLM
+wiki (`llm-wiki/` in this repository), which pins and describes the external resources and
+open-source components the project references. This documentation site gives the
+human-facing overview.
