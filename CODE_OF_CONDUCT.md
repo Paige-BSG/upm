@@ -50,6 +50,19 @@ the community leaders responsible for enforcement. All complaints will be review
 investigated promptly and fairly. The project maintainers will not tolerate
 discrimination or retaliation against anyone who reports a violation in good faith.
 
+## Contact for enforcement
+
+The project's maintainers are the enforcement contact. Report conduct issues privately,
+so they are not publicly aired before they are reviewed. The confirmed private route today
+is the repository's GitHub Private Vulnerability Reporting intake, which lets you send
+the maintainers a non-public report:
+
+- Submit a private report: <https://github.com/Paige-BSG/upm/security/advisories/new>
+- Advisories page: <https://github.com/Paige-BSG/upm/security/advisories>
+
+A maintainer will treat a conduct report raised this way in confidence and route it to
+enforcement. If a dedicated public conduct email is added later, it will be listed here.
+
 ## Attribution
 
 This Code of Conduct is adapted from the [Contributor Covenant][homepage], version 2.1,

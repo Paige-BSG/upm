@@ -9,8 +9,13 @@ Use this page if you believe you've found a vulnerability.
 **Do not open a public issue or pull request for a security vulnerability.** It
 would disclose the issue before it's fixed.
 
-Instead, email the maintainers directly, or reach them through the project's private
-channel. Include:
+Instead, report it privately through GitHub Private Vulnerability Reporting:
+
+- Submit a private report: <https://github.com/Paige-BSG/upm/security/advisories/new>
+- Advisories page: <https://github.com/Paige-BSG/upm/security/advisories>
+
+This is a private intake: the report is not publicly visible until you and the maintainer
+make it so. Include:
 
 - What the problem is and where it lives (repository, file, function).
 - How to reproduce it, including the version affected.

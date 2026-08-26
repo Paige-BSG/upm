@@ -1,8 +1,8 @@
 # Contributing to UPM
 
 Thanks for helping. This project is early — the repository currently holds public
-documentation and an agent LLM wiki, and product source code is being added as the
-upstream refactor is released. The workflow below applies to whatever you change.
+documentation and an agent LLM wiki, and product source code will be added as phases land.
+The workflow below applies to whatever you change.
 
 ## Reporting a bug or suggesting a feature
 

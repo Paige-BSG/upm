@@ -59,6 +59,17 @@ unsourced claims, dead links, and manifest/lockfile pins that disagree.
   with `--base <git-ref>` to verify that no existing record (present at that ref) was
   modified or deleted — only new records may be added.
 
+## Frozen vs dynamic sources
+
+A source pinned to a single immutable revision (a fixed commit, tag, gist revision,
+release) is **frozen** — set `kind` to one of `idea-gist`, `source-repo`, `package`,
+`license`, `api-spec`, `spec`, `manifest`, `release`, and no `retrievedAt` is required.
+
+Anything else (web page, doc index, service announcement, vendor site, blog post) is
+**dynamic** and must record a timezone-aware `retrievedAt` (ISO-8601 with `Z` or a
+`±HH:MM`/`±HHMM` offset) plus an optional `etag` / `lastModified`. `scripts/check_llm_wiki.py`
+enforces this per `kind`.
+
 ## License / rights rule
 
 Never copy an upstream body into `raw/` unless it is licensed for redistribution. The

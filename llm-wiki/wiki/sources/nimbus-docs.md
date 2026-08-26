@@ -2,7 +2,7 @@
 
 **META-TOOL** — the docs framework this project uses. Not UPM tech stack.
 
-- Raw record: `llm-wiki/raw/sources/nimbus-docs/43d4c809ead73db9a8277fe2616ca701f5e85a30dc665036876bad90716192af.json` (MIT).
+- Raw record: `llm-wiki/raw/sources/nimbus-docs/74fda4f769257ba314e613f0b0c62e4a146137b1afd0550349dd96662197c86f.json` (MIT).
 - Derived page: [components/nimbus-docs](components/nimbus-docs.md).
 - Upstream: <https://github.com/cloudflare/nimbus>, docs <https://nimbus-docs.com/>.
 
@@ -17,4 +17,6 @@ integration surface may change, so it is pinned exact.
 
 - The raw record stores an identity + the fetched `llms.txt` fingerprint (byte count +
   digest), not the full docs tree (MIT allows redistribution, but we keep it lean).
+- The doc index is dynamic, so the record carries a timezone-aware `retrievedAt` plus the
+  ETag from that fetch; a later change is re-ingested as a new record (new hash/filename).
 - No unlicensed body copy; the license is MIT from upstream.

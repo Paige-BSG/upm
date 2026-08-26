@@ -1,27 +1,36 @@
 ---
 title: Related projects
-description: The upstream project UPM refactors, and the comparison baseline.
+description: The public project that anchors the problem space, and the neutral comparison baseline.
 ---
 
-UPM is not developed in isolation. Two public projects define its reference and its
-comparison.
+UPM is an AI-native rebuild, but it is not developed in isolation. Two public projects
+anchor it: one for the problem space, and one as a neutral comparison baseline.
 
 ## upmio
 
 - Repository: [https://github.com/upmio](https://github.com/upmio)
-- Role: **reference implementation**. UPM is a thorough refactor of upmio, released as
-  open source — not a fork of a branch. The earlier open-source codebase is reference
-  material.
+- Role: **problem-space and operator-experience reference**. Our company already ships a
+  data-service ops product, and this is its public repository. UPM uses it to understand
+  the workflows, the pain points, and how operators approach the problem. It is **not**
+  source code being moved into this repository; it is public reference material only.
 
 ## KubeBlocks
 
 - Repository: [https://github.com/apecloud/kubeblocks](https://github.com/apecloud/kubeblocks)
-- Role: **comparison baseline**. KubeBlocks gates its advanced features behind a paid
-  tier, which is contrary to the open-source spirit UPM follows. UPM keeps its
-  fundamentals open. Use KubeBlocks only as a neutral point of comparison. The LLM wiki
-  documents it with first-hand sources and neutral phrasing.
+- Role: **neutral comparison baseline**. KubeBlocks is a well-known open-source project in
+  the same space. UPM records its OSS / Enterprise distinction as a fact, not as a
+  criticism: the Open Source tier provides the control plane and Day-2 operations with
+  official user documentation; the Enterprise tier is a separate commercial layer adding a
+  management console, multi-tenancy and security auditing, additional commercial database
+  engines, and cross-region DR and observability.
+- UPM is an **AI-native alternative** to KubeBlocks, not a redeployment of it. The
+  comparison is recorded neutrally in the agent LLM wiki, at the repo file
+  `llm-wiki/wiki/comparisons/kubeblocks.md`, sourced from the vendor's own pages.
 
 ## The documentation stack
 
 - **Nimbus Docs** (`cloudflare/nimbus`) — the docs framework this site is built on. It is
   a meta-tool of this repository, not UPM tech stack, and is described in the LLM wiki.
+- **Pi Agent** (`earendil-works/pi`) — the running runtime the in-product agent is built
+  on. It is UPM's intended product stack and is ingested into the LLM wiki when the
+  tech-stack phase lands.

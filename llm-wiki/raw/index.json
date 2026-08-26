@@ -1,8 +1,1 @@
-{
-  "records": {
-    "google-code-wiki": "raw/sources/google-code-wiki/529b606b7d708e2bbf5a96699f0a8dcab38aafd5dd5df56fb25ed34c475b6d69.json",
-    "karpathy-llm-wiki": "raw/sources/karpathy-llm-wiki/acd3dfdf772c585c5bd0d88e0ffe2f2840e7e17870ce7fe32fc84ac24d97ccc8.json",
-    "nimbus-docs": "raw/sources/nimbus-docs/43d4c809ead73db9a8277fe2616ca701f5e85a30dc665036876bad90716192af.json"
-  },
-  "schema": 1
-}
+{"records": {"google-code-wiki": "raw/sources/google-code-wiki/8874579792b7622eee4b35f566ec723bb2d0e847fcd68ab2fa3fa681ae6676e0.json", "karpathy-llm-wiki": "raw/sources/karpathy-llm-wiki/1dd84386fd4e9cdece15e364540ba7aff977f30978a33a968572e4a510079f77.json", "kubeblocks-home": "raw/sources/kubeblocks-home/dc9e79d453e59f58abde8e3c65bbe5496477ef5a1f96be0884ad4de90127df49.json", "kubeblocks-openshift": "raw/sources/kubeblocks-openshift/891acb798eee5dfaa351501b1c9274dd5acd0dcad0ed1f98efdcb93bb6c06ca0.json", "nimbus-docs": "raw/sources/nimbus-docs/74fda4f769257ba314e613f0b0c62e4a146137b1afd0550349dd96662197c86f.json"}, "schema": 1}

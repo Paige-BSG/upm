@@ -2,7 +2,7 @@
 
 **META-TOOL** — the knowledge-management paradigm this wiki follows. Not UPM tech stack.
 
-- Raw record: `llm-wiki/raw/sources/karpathy-llm-wiki/acd3dfdf772c585c5bd0d88e0ffe2f2840e7e17870ce7fe32fc84ac24d97ccc8.json` (no license stated).
+- Raw record: `llm-wiki/raw/sources/karpathy-llm-wiki/1dd84386fd4e9cdece15e364540ba7aff977f30978a33a968572e4a510079f77.json` (no license stated).
 - Derived page: [concepts/karpathy-llm-wiki](concepts/karpathy-llm-wiki.md).
 - Upstream: <https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f> — the
   canonical idea file (revision ac46de1a...).

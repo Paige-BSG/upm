@@ -1,13 +1,14 @@
 # UPM
 
-UPM is an open-source project to manage databases and middleware on Kubernetes. This
-repository is its **public home** — the place where external users understand the
-project, see its documentation and its knowledge base, and eventually contribute.
+UPM is an **AI-native data-service ops control plane**: an open-source project to help
+teams operate databases and middleware on Kubernetes. It is designed so that an in-product
+**agent is a first-class operator** — a human expresses intent, and a deterministic
+control plane executes it safely.
 
-> Status: early. The repository currently holds the project's public documentation and
-> the agent LLM wiki. Product source code is still being refactored upstream
-> (<https://github.com/upmio>) and will be added here as it is released. Nothing here
-> is a promise that a usable product exists yet — see the roadmap in `docs/`.
+> Status: early. This repository holds the project's public documentation and the agent
+> LLM wiki. There is **no usable product yet** — no product source code is in this
+> repository. The pages in `docs/` describe the intended direction, not a shipped
+> artifact. See the [roadmap](docs/src/content/docs/introduction/roadmap.mdx).
 
 ## What's here
 
@@ -24,9 +25,17 @@ project, see its documentation and its knowledge base, and eventually contribute
 
 ## Project background
 
-UPM is a thorough refactor of <https://github.com/upmio>. It manages databases and
-middleware on Kubernetes. The reference implementation is being rebuilt, not forked;
-the earlier open-source repositories are used only as reference material.
+UPM is an AI-native rebuild of data-service operations on Kubernetes. Our company already
+ships a product for this space; its public repository
+([upmio](https://github.com/upmio)) is our **reference for the problem space and the
+operator experience** — not source code being moved into this repository. UPM is a fresh,
+public, AI-native project, and the earlier upmio codebase is public reference material
+only.
+
+The intended product shape is three layers, designed from day one: an **agent** that
+takes intent, a **domain harness** that is the security contract around that intent, and a
+**deterministic execution layer** (open-source operators/controllers) that actually makes
+the change. The architecture page describes this direction in more detail.
 
 ## Repository conventions
 
@@ -50,3 +59,4 @@ From the repo root:
 
 - `python3 scripts/check_llm_wiki.py .` — content-addressed raw records, `--base` guard,
   index/log/link/source checks.
+- `python3 scripts/test_check_llm_wiki.py .` — negative anti-forgery tests for the index.
