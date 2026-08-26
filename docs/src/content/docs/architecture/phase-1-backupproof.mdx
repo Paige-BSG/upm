@@ -69,22 +69,32 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 ### A. Plan, identity, and `planHash`
 
 - **A1.** The plan is a canonical JSON document composed of exactly these top-level fields:
-  `facts`, `actions`, `risks`, `budgets`, `policy`.
+  `facts`, `actions`, `risks`, `budgets`, `policy`. It is **not** a free-form blob: `facts`
+  is the live target snapshot the harness took, `policy` the risk-tier and allow/deny
+  decision, `budgets` the per-action/time limits, and so on. The full identity this plan is
+  approved against is part of what `planHash` covers (A4).
 - **A2.** `planHash` **SHALL** be the SHA-256, encoded as 64 lowercase hex, of the plan
-  document serialised canonically: `json.dumps(sort_keys=True, separators=(",", ":"),
-  ensure_ascii=False)` as UTF-8 with no trailing newline. Equal bytes ⇒ equal `planHash`;
-  a changed plan or a different serialisation ⇒ a different `planHash`.
+  document serialised canonically per **RFC 8785 (JSON Canonicalization Scheme, JCS)** — not
+  a language-specific `json.dumps`. JCS is the portable canonical form (UTF-16-based key
+  order, ECMAScript number serialisation, no insignificant whitespace); an implementation
+  **MUST** use an RFC 8785 canonicaliser, because `planHash` equality is only meaningful if
+  two implementations produce byte-identical bytes for the same plan. Equal canonical bytes
+  ⇒ equal `planHash`; a changed plan or a different serialisation ⇒ a different `planHash`.
 - **A3.** `planHash` is bound to an **actor**. There is no valid approval for a `planHash`
   without the actor it was approved for. A plan re-presented under a different actor is a
   different operation, even if its bytes are identical.
-- **A4.** The plan **SHALL** record the object and cluster identity it is approved against,
-  and `planHash` covers all of it:
-  - the **source** and **restore** Kubernetes namespace **UIDs**;
-  - the `kube-system` namespace **UID** of the source cluster and of the restore cluster
-    (this is the cluster identity; a restore to a different cluster has a different
-    `kube-system` UID and therefore a different `planHash`);
-  - the **target object** identity: its `UID`, `name`, `generation`, `resourceVersion`,
-    and `specDigest` — where `specDigest` is SHA-256 of the object's immutable spec.
+- **A4.** The plan **SHALL** record the single identity the operation runs inside, and
+  `planHash` covers all of it. This slice runs in **one** Kubernetes cluster, across
+  **two** namespaces, creating a **new** MySQL CR for the restore:
+  - the one Kubernetes cluster identity (its `kube-system` namespace **UID**);
+  - the **source** namespace **UID** and the **restore** namespace **UID** (two distinct
+    namespaces in that same cluster);
+  - the source **target object** identity: its `UID`, `name`, `generation`, `resourceVersion`,
+    and `specDigest` — where `specDigest` is SHA-256 of the target object's **spec as captured
+    in the plan** (the approved spec snapshot), not a claim that the object's spec is
+    immutable (it carries `resourceVersion` and `generation`, both mutable);
+  - the **restore object** identity: the deterministic `name` (C1) and the expected spec of
+    the new MySQL CR created in the restore namespace, which the operation hashes.
 - **A5.** The `budgets` field gives per-action and total time/limit budgets the harness
   enforces; the `policy` field carries the risk-tier and allow/deny policy that gates
   whether the labelled action may run.
@@ -96,35 +106,53 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   key maps to a `subject`, and a `subject` is granted one or more `role`s that bound the
   allowed actions; the envelope is issued for that trusted key→subject→role chain and is
   only honoured for the `actor` + `planHash` it names.
-- **B2.** An **unsigned** envelope **MUST NOT** be honoured for more than **15 minutes**
-  after it was issued; beyond that the envelope is void and must be re-issued.
-- **B3.** The signed envelope is **single-use** (consumed on first use). After it is consumed,
-  the **same operation** (same `actor` + `planHash`) **MAY restart** across a token expiry:
-  re-approval for the identical operation is allowed, and is not a new operation. It does
-  not extend the lifetime of a *different* planHash.
+- **B2.** The signed envelope carries a **15-minute validity window** from issue to expiry.
+  It is a **signed** envelope (B1); there is no such thing as a long-lived unsigned approval.
+  Beyond the window the envelope is void for any *new* issuance.
+- **B3.** The signed envelope is **single-use** and **journal-bound** for resume. Once the
+  approval and its canonical plan digest are recorded in the immutable journal, an operation
+  that resumes across the 15-minute expiry **MUST** use that same journal-persisted **verified
+  signed envelope** and **canonical digest** — it **MUST NOT** issue a fresh re-approval.
+  Restart is therefore *resume with the same approved envelope/digest* (D), not
+  re-authorisation; it never extends the life of a different `planHash`.
 
 ### C. Deterministic create and `AlreadyExists`
 
 - **C1.** Object names are deterministic: derived from (`operationId`, `planHash`) via a
   fixed rule, so the same operation re-run produces the same names.
 - **C2.** On create, if an object with that deterministic name already exists, the
-  implementation **MUST** verify the existing object's identity matches the plan exactly
-  (`UID`, `specDigest`, `generation`, `resourceVersion`, per A4). A match is a benign
-  idempotent re-apply; a mismatch **MUST** fail the operation. `AlreadyExists` is therefore
-  **not** a blanket success — identity is checked to the exact approved revision.
+  implementation **MUST** verify the existing object matches what **this operation itself**
+  would have created — its **own** full request identity and its **first-observed**
+  server/status/artifact identity (the spec it submitted, plus the `UID` / `generation` /
+  `resourceVersion` / observed `status` and artifact reported at first observation). This is
+  **not** the source target identity (A4): idempotency is keyed to the created object's own
+  request + observed state, so a benign re-apply is recognised only when the already-created
+  object is the one this operation made. A mismatch **MUST** fail the operation.
+  `AlreadyExists` is therefore **not** a blanket success — identity is checked to the exact
+  created revision.
 
 ### D. Immutable journal and restart
 
 - **D1.** The operation and evidence log **SHALL** be an append-only, immutable journal
   stored as a hash chain (each entry commits to the previous entry's digest), carried in a
-  ConfigMap under the control-plane ServiceAccount (I2).
-- **D2.** The journal is not open-ended by intent: unbounded growth is an acknowledged
+  ConfigMap under the control-plane ServiceAccount (I2). The journal ConfigMap **SHALL** have
+  a **deterministic name** derived from (`operationId`, `planHash`) (C1), so re-runs address
+  the same journal and the chain is never orphaned.
+- **D2.** Each journal entry is a **complete typed event record** with a defined field set:
+  `eventId`, `operationId`, `phase`, `actor`, `intent`, `facts` (the live snapshot), the
+  cluster + namespace + each CR identity, the artifact, the target **pre/post** state, the
+  oracle result, the timeline, the exact pins (`retrievedAt`, digests), `keyId`, and
+  `signature`. An entry is valid only if it carries the full set; a partial event is not
+  accepted into the chain.
+- **D3.** Every effect is journaled **write-ahead**: the API call and the observed reconcile
+  **MUST** be recorded before the effect is treated as committed, so the chain preserves the
+  intent-to-observed causal order.
+- **D4.** The journal is not open-ended by intent: unbounded growth is an acknowledged
   boundary, written here so it is a documented limitation rather than a hidden one.
-- **D3.** On restart, the reconciler reads the persisted journal state and **MUST** do only
+- **D5.** On restart, the reconciler reads the persisted journal state and **MUST** do only
   one of: **resume** the in-flight operation from the last persisted state (reconcile), or
   enter **BLOCKED**. It **MUST NOT** silently start a fresh journal or rewind the chain;
-  that would break evidence continuity and the hash-chain integrity of the terminal
-  verdict (E3).
+  that would break evidence continuity and the hash-chain integrity of the terminal verdict.
 
 ### E. Version fence, residual risk, and finalisation
 
@@ -172,9 +200,15 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   binding** (the reading key is trusted for that source). It does **not** provide human
   non-repudiation: a human (e.g. a DBA) may have intervened, and evidence is machine
   provenance, not a human attestation.
-- **G3.** The offline closure **MUST** reference the **approval** (`planHash` + `actor` +
-  signature) and the journal **root** and **head** digests, so an offline verifier can
-  reconstruct the full chain: approval → journal root → journal head.
+- **G3.** Large evidence bodies (full backups, logs, big artifact dumps) are **externalised**
+  outside the journal; the journal stores only the **digest + signature** of each external
+  body, so integrity is preserved without bloating the chain.
+- **G4.** The offline closure **MUST** be a **signed success/failure evidence bundle** that
+  references the full closure: the **approval** (`planHash` + `actor` + signature), the
+  journal **root** and **head** digests, and the signed set of `actor`, `intent`, `facts`,
+  the cluster + namespace + each CR identity, the artifact, target **pre/post**, the oracle,
+  the timeline, the exact pins, `keyId`, and `signature` — so an offline verifier can
+  reconstruct the whole chain: approval → journal root → journal head → the signed closure.
 
 ### H. Subject-verifying failures are terminal, not silent
 
@@ -233,36 +267,40 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 ### J. Frozen invariant IDs
 
 Each ID below is a frozen, machine-resolvable identifier the code/test contract references
-(`I6`). `SHALL` conveys a normative requirement.
+(`I6`). The canonical **exact** form is **`SPEC-P1-<NAME>`**; the short `<NAME>` is used
+only as a prose label. `SHALL` conveys a normative requirement.
 
-| Frozen invariant ID | Defined by | Normative meaning |
+| Exact invariant ID (`SPEC-P1-*`) | Defined by | Normative meaning |
 |---|---|---|
-| `SCOPE-NONDESTRUCTIVE` | A4, C, Validation | The operation never mutates the source; restore targets an isolated new namespace/cluster with a distinct `kube-system` UID. |
-| `PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 covering the plan document (facts/actions/risks/budgets/policy) *and* its actor + object/cluster identity bindings. |
-| `APPROVAL-ED25519` | B1–B3 | Approval is a Ed25519-signed, single-use envelope; unsigned validity ≤ 15 min; the same operation may restart across expiry. |
-| `JOURNAL-CHAIN` / `APPEND-ONLY` | D1–D2 | The journal is an append-only hash-chain ConfigMap; unbounded growth is an acknowledged boundary. |
-| `RESUME-OR-BLOCKED` | D3 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
-| `TARGET-FENCE` | E1, E3 | `resourceVersion` fence + only-own-fence release (else `FENCE_RELEASE_BLOCKED`); cross-object TOCTOU residual risk (`E2`) is accepted and documented. |
-| `DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
-| `ORACLE-AB` | F1–F4 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows. |
-| `EVIDENCE-SIGN` | G1–G3 | Evidence signed separately from approval; claim = bytes/integrity + trusted key–source binding; offline closure references approval + journal root/head. |
-| `LEASE-NOT-SECURITY` | I4 | Lease fixed 30s / renew 10s; reduces contention only, never a safety mechanism. |
-| `AGENT-NO-PRIVILEGE` | I1 | The agent has no `bash` / `kubectl` / `kubeconfig` / DB admin access. |
-| `NO-COMMENT` | I5–I6 | Authored source/tests forbid `//`, block/JSDoc comments, `@ts-ignore`/`@ts-expect-error`, and pragmas; a shebang is allowed; every invariant ID resolves. |
+| `SPEC-P1-SCOPE-NONDESTRUCTIVE` | A4, C, F, Validation | The backup path does not destructively modify the source data it is proving (the A state is preserved and then restored); the operation *does* write test data to the source after backup (B rows, F3), so it is **not** "never mutates the source", and the restore runs in a **new namespace of the same cluster** with a **new** MySQL CR (A4), not a different cluster. |
+| `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the plan document (facts/actions/risks/budgets/policy) *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
+| `SPEC-P1-APPROVAL-ED25519` | B1–B3 | Approval is an Ed25519-signed, single-use envelope with a 15-min validity window; resume across expiry is bound to the journal-persisted same verified signed envelope + canonical digest, never a fresh re-approval. |
+| `SPEC-P1-JOURNAL-CHAIN` | D1–D3 | The journal is an append-only hash-chain ConfigMap with a deterministic name (operationId+planHash); each entry is a complete typed event record; effects are journaled write-ahead. |
+| `SPEC-P1-APPEND-ONLY` | D4 | The journal is append-only; unbounded growth is an acknowledged boundary. |
+| `SPEC-P1-RESUME-OR-BLOCKED` | D5 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
+| `SPEC-P1-TARGET-FENCE` | E1, E3 | `resourceVersion` fence + only-own-fence release (else `FENCE_RELEASE_BLOCKED`); cross-object TOCTOU residual risk (`E2`) is accepted and documented. |
+| `SPEC-P1-DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
+| `SPEC-P1-ORACLE-AB` | F1–F4 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows. |
+| `SPEC-P1-EVIDENCE-SIGN` | G1–G4 | Evidence signed separately from approval; large bodies externalised (journal stores digest + signature); signed success/failure closure references approval + journal root/head + the full signed set. |
+| `SPEC-P1-LEASE-NOT-SECURITY` | I4 | Lease fixed 30s / renew 10s; reduces contention only, never a safety mechanism. |
+| `SPEC-P1-AGENT-NO-PRIVILEGE` | I1 | The agent has no `bash` / `kubectl` / `kubeconfig` / DB admin access. |
+| `SPEC-P1-NO-COMMENT` | I5–I6 | Authored source/tests forbid `//`, block/JSDoc comments, `@ts-ignore`/`@ts-expect-error`, and pragmas; a shebang is allowed; every invariant ID resolves. |
 
 ## What "real" validation means here
 
 The proof uses a fixed set of **synthetic data** (the A/B oracle of F1–F4) backed up to
 MinIO, then:
 
-1. Write more data (B rows) **after** the backup has been taken.
-2. **Restore to a different namespace** and a freshly created cluster (distinct
-   `kube-system` UID, per A4).
+1. Write more data (B rows, F3) **after** the backup has been taken — an intentional,
+   journaled source-side test effect, not a hidden mutation.
+2. **Restore to a different namespace** in the **same** cluster, creating a **new** MySQL CR
+   (A4) — one cluster identity, two namespaces, one new CR.
 3. Verify the **backup-time A state** with the fixed SQL oracle (F4), and confirm the
-   **offline evidence** is present (G3); the post-backup B rows are not.
+   **offline evidence** is present (G4); the post-backup B rows are not.
 
-This shows the backup captured a real, consistent snapshot, restored somewhere isolated,
-and produced auditable, signed evidence — without touching the original cluster.
+This shows the backup captured a real, consistent snapshot, restored somewhere isolated (a
+fresh namespace + new MySQL CR in the same cluster), and produced auditable, signed evidence —
+without touching the source cluster's committed data.
 
 ## Non-goals (Phase 1)
 
