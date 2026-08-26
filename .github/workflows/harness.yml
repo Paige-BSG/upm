@@ -1,0 +1,20 @@
+name: harness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --experimental-strip-types scripts/check_no_comments.ts .
+      - run: node --experimental-strip-types scripts/check_invariant_ids.ts .
+      - run: node --experimental-strip-types scripts/check_public_secrets.ts .
+      - run: node --experimental-strip-types --test test/*.test.ts
+        working-directory: harness

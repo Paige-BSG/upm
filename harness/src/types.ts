@@ -1,0 +1,179 @@
+import { requireInvariant } from "./ids.ts";
+
+export const SPEC_P1_SCOPE_NONDESTRUCTIVE = requireInvariant("SPEC-P1-SCOPE-NONDESTRUCTIVE");
+export const SPEC_P1_JOURNAL_CHAIN = requireInvariant("SPEC-P1-JOURNAL-CHAIN");
+export const SPEC_P1_JOURNAL_APPEND_ONLY = requireInvariant("SPEC-P1-JOURNAL-APPEND-ONLY");
+export const SPEC_P1_LEASE_NOT_SECURITY = requireInvariant("SPEC-P1-LEASE-NOT-SECURITY");
+export const SPEC_P1_RESUME_OR_BLOCKED = requireInvariant("SPEC-P1-RESUME-OR-BLOCKED");
+export const SPEC_P1_PLANHASH_BINDINGS = requireInvariant("SPEC-P1-PLANHASH-BINDINGS");
+export const SPEC_P1_APPROVAL_ED25519 = requireInvariant("SPEC-P1-APPROVAL-ED25519");
+export const SPEC_P1_TARGET_FENCE = requireInvariant("SPEC-P1-TARGET-FENCE");
+export const SPEC_P1_DRIFT_DURING = requireInvariant("SPEC-P1-DRIFT-DURING");
+export const SPEC_P1_ORACLE_AB = requireInvariant("SPEC-P1-ORACLE-AB");
+export const SPEC_P1_EVIDENCE_SIGN = requireInvariant("SPEC-P1-EVIDENCE-SIGN");
+export const SPEC_P1_NO_COMMENT = requireInvariant("SPEC-P1-NO-COMMENT");
+export const SPEC_P1_AGENT_NO_PRIVILEGE = requireInvariant("SPEC-P1-AGENT-NO-PRIVILEGE");
+
+export const API_VERSION = "upm.dev/v0" as const;
+export const BACKUP_PROOF_KIND = "BackupProof" as const;
+export const CLUSTER_TYPE = "group-replication" as const;
+export const CONTROL_NAMESPACE = "upm-system" as const;
+export const WRITER_LEASE_NAME = "upm-backupproof-writer" as const;
+export const FENCE_ANNOTATION = "upm.io/backup-proof-fence" as const;
+export const APPROVAL_TTL_MS = 15 * 60 * 1000;
+export const LEASE_DURATION_MS = 30_000;
+export const SCHEMA_VERSION = "phase1-v0.2" as const;
+
+export const PERCONA_KINDS = [
+  "PerconaServerMySQL",
+  "PerconaServerMySQLBackup",
+  "PerconaServerMySQLRestore",
+] as const;
+
+export type PerconaKind = (typeof PERCONA_KINDS)[number];
+
+export type AgentCapabilities = {
+  bash: boolean;
+  kubectl: boolean;
+  kubeconfig: boolean;
+  dbAdmin: boolean;
+};
+
+export type Actor = {
+  actorId: string;
+  namespaces: readonly string[];
+  kinds: readonly PerconaKind[];
+};
+
+export type TargetRef = {
+  namespace: string;
+  name: string;
+  uid: string;
+  generation: number;
+  resourceVersion: string;
+  specDigest: string;
+};
+
+export type PlanDocument = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  operationId: string;
+  actor: string;
+  clusterUid: string;
+  targetNamespace: string;
+  targetNamespaceUid: string;
+  target: TargetRef;
+  factsSnapshotId: string;
+  factsDigest: string;
+  actions: readonly string[];
+  parameters: Record<string, string>;
+  artifactDestination: string;
+  risk: string;
+  timeoutMs: number;
+  budget: string;
+  stopConditions: readonly string[];
+  approvalPolicyVersion: string;
+};
+
+export type ApprovalEnvelope = {
+  approvalId: string;
+  planHash: string;
+  approverSubject: string;
+  keyId: string;
+  issuedAt: number;
+  expiresAt: number;
+  nonce: string;
+  signature: string;
+};
+
+export type BackupProofRequest = {
+  apiVersion: typeof API_VERSION;
+  kind: typeof BACKUP_PROOF_KIND;
+  operationId: string;
+  plan: PlanDocument;
+  planHash: string;
+  approval: ApprovalEnvelope;
+  restoreNamespace: string;
+};
+
+export type DenialCode =
+  | "AGENT_PRIVILEGE"
+  | "UNAPPROVED"
+  | "PLAN_HASH_MISMATCH"
+  | "DRIFT"
+  | "RBAC"
+  | "SAME_NAMESPACE"
+  | "TIMEOUT"
+  | "ADAPTER_FAILURE"
+  | "BLOCKED"
+  | "LEASE_CONTENDED"
+  | "FENCE_RELEASE_BLOCKED"
+  | "TARGET_DRIFTED_DURING_OPERATION"
+  | "ORACLE_FAILED";
+
+export type JournalEventType =
+  | "IntentAccepted"
+  | "ApprovalConsumed"
+  | "FenceSet"
+  | "BackupWriteAhead"
+  | "BackupCreated"
+  | "RestoreWriteAhead"
+  | "RestoreCreated"
+  | "EvidenceClosed";
+
+export type JournalEvent = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  operationId: string;
+  sequence: number;
+  type: JournalEventType;
+  previousEventDigest: string | null;
+  eventDigest: string;
+  payload: Record<string, string>;
+};
+
+export type EvidenceManifest = {
+  operationId: string;
+  planHash: string;
+  actor: string;
+  clusterUid: string;
+  sourceNamespace: string;
+  restoreNamespace: string;
+  targetPre: TargetRef;
+  targetPost: TargetRef;
+  artifactDigest: string;
+  oracle: {
+    schemaDigest: string;
+    count: number;
+    primaryKeyMin: number;
+    primaryKeyMax: number;
+    orderedRowHash: string;
+    setBAbsent: boolean;
+  };
+  driftedDuring: boolean;
+  pinsDigest: string;
+  keyId: string;
+  signature: string;
+};
+
+export type OperationRecord = {
+  operationId: string;
+  planHash: string;
+  denial: DenialCode | null;
+  evidence: EvidenceManifest | null;
+  driftedDuring: boolean;
+};
+
+export class AdapterFailureError extends Error {
+  readonly code = "ADAPTER_FAILURE";
+}
+
+export class AdapterTimeoutError extends Error {
+  readonly code = "TIMEOUT";
+}
+
+export class AdapterConflictError extends Error {
+  readonly code = "CONFLICT";
+}
+
+export class AdapterUnauthorizedError extends Error {
+  readonly code = "RBAC";
+}
