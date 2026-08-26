@@ -5,8 +5,8 @@ Source: [sources/kube-rs](sources/kube-rs.md).
 
 ## What it is
 
-A Rust Kubernetes client (`kube` + `kube-runtime`), version `4.2.0`. For UPM's own Rust
-operator later.
+A Rust Kubernetes client (`kube` + `kube-runtime`), version `4.2.0` (2026-07-22). For
+UPM's own Rust operator later.
 
 ## When it enters the stack
 
@@ -17,4 +17,4 @@ operator. Until then the Phase 1 deterministic layer is TypeScript on Node 22 vi
 
 ## Upstream
 
-<https://github.com/kube-rs/kube-rs> — Apache-2.0; release `4.2.0`.
+<https://github.com/kube-rs/kube> — Apache-2.0; release `4.2.0`.

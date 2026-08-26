@@ -52,8 +52,10 @@ agent acting through a shell.
   is idempotent; the journal is an immutable hash chain.
 - **Data plane is a candidate.** Phase 1 drives an **external** Percona Server for MySQL
   Operator (non-PXC, group replication) plus Percona Server 8.4.10-10.1, XtraBackup, and
-  MinIO. These are not UPM source; the exact CRD / API and image digests are **pending
-  admission** (`candidate/pending admission`).
+  MinIO. These are not UPM source; the operator tag commit, `ps.percona.com/v1` / kinds,
+  the CRD bytes/SHA-256, and the per-arch image digests are recorded first-hand, and the
+  remaining open items are the test-machine arch / compatibility, the MinIO image digest,
+  the PS / XtraBackup license classification, and the client-node vs k8s pairing.
 - **BackupProof is a versioned API / JSON Schema**, not a universal DSL. No UPM CRD is
   frozen by this page.
 - Future components (the specific CRDs and manifest shapes) are **not** fixed by this

@@ -10,7 +10,7 @@ standalone LLM wiki, as content-addressed identity records:
 - `raw/sources/nimbus-docs` — Docs framework (Cloudflare Nimbus), MIT. Derived:
   `components/nimbus-docs`. **META-TOOL**.
 - `raw/sources/karpathy-llm-wiki` — Karpathy LLM wiki paradigm gist (revision
-  ac46de1a...). Derived: `concepts/karpathy-llm-wiki`. **META-TOOL**.
+  ac46de1ad27f92b28ac95459c782c07f6b8c964a). Derived: `concepts/karpathy-llm-wiki`. **META-TOOL**.
 - `raw/sources/google-code-wiki` — Google Code Wiki service announcement. Derived:
   `concepts/google-code-wiki`. **META-TOOL**.
 
@@ -31,7 +31,7 @@ no `retrievedAt` needed) from **dynamic** sources (web page, doc index, service
 announcement, vendor site, blog post), which must carry a timezone-aware `retrievedAt`
 and may carry an `etag` / `lastModified`:
 
-- Re-fetched `nimbus-docs` (docs index, ETag `74fd8dd9...`) and `google-code-wiki`
+- Re-fetched `nimbus-docs` (docs index, ETag `74fd8dd942058fe6c2dbe7604bf67889`) and `google-code-wiki`
   (announcement, no ETag) and re-recorded them with corrected hashes + `retrievedAt`.
 - `karpathy-llm-wiki` is frozen (fixed gist revision) and stays without `retrievedAt`.
 
@@ -101,3 +101,21 @@ body copy). All are frozen via an exact immutable pin:
 
 `raw/index.json` now points to all 11 ids; `wiki/index.md` rows and `wiki/sources/<id>.md`
 pages added for each new record. Unclosed: MinIO image digest, PS / XtraBackup SPDX.
+
+## 2026-08-27 ingest | Kubernetes Client Node + full-digest refresh
+
+Added the narrow Kubernetes client UPM's Phase 1 deterministic layer drives the external
+Percona operator with, as the second **PRODUCT STACK (ADOPTED)** record, and refreshed the
+first-hand identities of the existing Phase 1 records per @Sol / @Grok's no-truncation rule:
+
+- `raw/sources/kubernetes-client-node` — `@kubernetes/client-node@2.0.0`, Apache-2.0, gitHead
+  `f72cc23ed378cb8e7f09129ee6e55aa531a2b9ba`. **PRODUCT STACK (ADOPTED)**. Derived:
+  `technologies/kubernetes-client-node`. K8s compat vs Minikube `1.38.1` and the official
+  client-node vs k8s `1.35` pairing remain **PENDING**.
+- The 6 existing records are regenerated with full-length digests (no `...` truncation):
+  pi-agent's two npm integrities + tag commit + npm gitHead; operator tag commit + CRD
+  bytes/blob/sha256 + per-arch operator/percona-server/haproxy/router/orchestrator digests;
+  percona-server and percona-xtrabackup per-arch digests (XtraBackup arm64 is exactly
+  `fcf2b3fc20cfbfa6d47ec60cecd881f915beacdae838f994dda984baea825293`).
+- `raw/index.json` now points to all **12** ids; `wiki/index.md` gains the kubernetes-client-node
+  row. Still unclosed: MinIO image digest, PS / XtraBackup SPDX, test-machine arch/compat.

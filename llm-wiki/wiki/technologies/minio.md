@@ -6,11 +6,11 @@ Source: [sources/minio](sources/minio.md).
 
 ## What it is
 
-MinIO `RELEASE.2025-10-15T17-29-55Z`. Image digest **PENDING**.
+MinIO `RELEASE.2025-10-15T17-29-55Z`. **Image digest PENDING.**
 
 ## Why candidate (not admitted)
 
-The exact image digest is still being verified against first-party sources.
+The exact image digest is still to be confirmed against a first-party source.
 
 ## Boundary with UPM
 

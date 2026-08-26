@@ -35,12 +35,20 @@ anchor it: one for the problem space, and one as a neutral comparison baseline.
 - **Pi Agent** ([`earendil-works/pi`](https://github.com/earendil-works/pi), MIT) — the agent
   runtime the in-product agent is built on. It is UPM's product stack and is recorded in
   the LLM wiki (pinned to `v0.84.3`).
+- **Kubernetes Client Node**
+  ([`@kubernetes/client-node`](https://github.com/kubernetes-client/javascript), Apache-2.0) —
+  the narrow Kubernetes client the Phase 1 deterministic execution layer drives the external
+  operator through; UPM's own code is TypeScript on Node 22, not a shell or cluster-admin.
+  Recorded in the LLM wiki pinned to `2.0.0`.
 
 ## Phase 1 data-plane candidate
 
 The Phase 1 backup/restore slice drives an **external** data plane, not UPM source. These
-are recorded in the LLM wiki as `candidate/pending admission` — the exact CRD / API and all
-image digests are still open:
+are recorded in the LLM wiki as `candidate/pending admission`. The operator tag commit, the
+`ps.percona.com/v1` API and its kinds, the CRD bytes/SHA-256, and the per-arch image digests
+are recorded first-hand; still pending are the test-machine architecture / compatibility, the
+MinIO image digest, the PS / XtraBackup license classification, and the official client-node
+vs k8s pairing:
 
 - **Percona Server for MySQL Operator** (v1.2.0, non-PXC, group replication) —
   [`percona-server-mysql-operator`](https://github.com/percona/percona-server-mysql-operator).

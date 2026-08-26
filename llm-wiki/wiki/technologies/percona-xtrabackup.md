@@ -4,21 +4,20 @@
 backup in Phase 1. Not UPM source.
 Source: [sources/percona-xtrabackup](sources/percona-xtrabackup.md).
 
-## What it is
+## What it is (exact identities)
 
-Percona XtraBackup `8.4.0-6.1`. Image `percona/percona-xtrabackup:8.4.0-6.1`
-(amd64 `d135aa...`, arm64 `fcf2b3...`).
+Percona XtraBackup `8.4.0-6.1`.
 
-## Why candidate (not admitted)
+- `percona/percona-xtrabackup:8.4.0-6.1` —
+  amd64 `d135aadaae9e2f947cb2002f982f7b4c6e177b1c7e3d543ef7795aea999feedd`,
+  arm64 `fcf2b3fc20cfbfa6d47ec60cecd881f915beacdae838f994dda984baea825293`.
 
-License classification is **pending** — upstream GitHub SPDX is `NOASSERTION`; the actual
-license is Oracle's licensing terms. Admission pending confirmation of the exact image
-digests.
+## Status
 
-## Boundary with UPM
-
-XtraBackup is an external tool; UPM does not package or vendor it. Phase 1 uses it to
-produce a physical backup, then restores to a **different** namespace / cluster.
+- **Candidate, admission pending.** License classification is **PENDING** — upstream GitHub
+  SPDX is `NOASSERTION`, actual license is Oracle's licensing terms.
+- XtraBackup is an external tool; UPM does not package or vendor it. Phase 1 uses it to
+  produce a physical backup, then restores to a **different** namespace / cluster.
 
 ## Upstream
 

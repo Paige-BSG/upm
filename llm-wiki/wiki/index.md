@@ -20,6 +20,7 @@ immutable source record under `raw/sources/`.
 | [Google Code Wiki](concepts/google-code-wiki.md) | service-announcement | concepts (META-TOOL) | `raw/sources/google-code-wiki` |
 | [KubeBlocks — OSS vs Enterprise](comparisons/kubeblocks.md) | vendor-site | comparisons (BASELINE) | `raw/sources/kubeblocks-home` + `raw/sources/kubeblocks-openshift` |
 | [Pi Agent](technologies/pi-agent.md) | agent runtime | technologies (PRODUCT STACK, adopted) | `raw/sources/pi-agent` |
+| [Kubernetes Client Node](technologies/kubernetes-client-node.md) | Kubernetes client | technologies (PRODUCT STACK, adopted) | `raw/sources/kubernetes-client-node` |
 | [Percona Server for MySQL Operator](technologies/percona-server-mysql-operator.md) | operator (candidate) | technologies (DATA-PLANE CANDIDATE) | `raw/sources/percona-server-mysql-operator` |
 | [Percona Server for MySQL](technologies/percona-server-mysql.md) | database engine (candidate) | technologies (DATA-PLANE CANDIDATE) | `raw/sources/percona-server-mysql` |
 | [Percona XtraBackup](technologies/percona-xtrabackup.md) | backup tool (candidate) | technologies (DATA-PLANE CANDIDATE) | `raw/sources/percona-xtrabackup` |
