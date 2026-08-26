@@ -69,14 +69,28 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 ### A. Plan, identity, and `planHash`
 
 - **A1.** The plan is a canonical JSON document (`PlanDocument`) with an **exact versioned
-  field set**, all of which enter the RFC 8785 bytes (`A2`):
-  - `schemaVersion`; `operationId`; `actor`;
-  - the single cluster identity; the source and restore namespace identities; the source
-    target identity;
-  - `factsSnapshotId` / `factsDigest`;
-  - the full `actions` with their `parameters`; the artifact destination identity;
-  - `risk`; `timeout` / `budget` / `stop conditions`; `approvalPolicyVersion`.
-  It is **not** a free-form blob; every named field is required and hashes into `planHash`.
+  field set**; every field is required and enters the RFC 8785 bytes (`A2`). The full **root
+  key set** is exactly, in this form:
+
+  ```json
+  ["schemaVersion","operationId","actor","clusterUid","targetNamespace","targetNamespaceUid",
+   "restoreNamespace","restoreNamespaceUid","requiredApproverRole","requiredApproverSubject",
+   "target","factsSnapshotId","factsDigest","actions","parameters","artifactDestination",
+   "risk","timeoutMs","budget","stopConditions","approvalPolicyVersion"]
+  ```
+
+  `target` is an object with the **exact** keys (the identities recorded in `A4`):
+
+  ```json
+  ["name","uid","generation","resourceVersion","specDigest"]
+  ```
+
+  The plan is **not** a free-form blob, and it is **not** satisfied by two different schemas
+  that merely name the same semantics: a `PlanDocument` is compliant only if its root key set is
+  exactly the first list above and `target`'s key set is exactly the second. `clusterUid` is the
+  one cluster identity; `targetNamespace`/`targetNamespaceUid` and
+  `restoreNamespace`/`restoreNamespaceUid` are the two namespaces of that cluster; and
+  `requiredApproverRole`/`requiredApproverSubject` are the approver binding checked in `B1`.
 - **A2.** `planHash` **SHALL** be the SHA-256, encoded as 64 lowercase hex, of the plan
   document serialised canonically per **RFC 8785 (JSON Canonicalization Scheme, JCS)** — not
   a language-specific `json.dumps`. JCS is the portable canonical form (UTF-16-based key
@@ -101,9 +115,9 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
     immutable (it carries `resourceVersion` and `generation`, both mutable);
   - the **restore object** identity: the deterministic `name` (C1) and the expected spec of
     the new MySQL CR created in the restore namespace, which the operation hashes.
-- **A5.** The `risk` field and the `timeout` / `budget` / `stop conditions` field give the
-  per-action and total time/limit budgets and stop conditions the harness enforces; the
-  `approvalPolicyVersion` field names the policy that gates whether a labelled action may run.
+- **A5.** `risk`, `timeoutMs`, `budget`, and `stopConditions` give the per-action and total
+  time/limit budgets and stop conditions the harness enforces; `approvalPolicyVersion` names
+  the policy that gates whether a labelled action may run.
 
 ### B. Approval envelope
 
@@ -126,8 +140,12 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 
 ### C. Deterministic create and `AlreadyExists`
 
-- **C1.** Object names are deterministic: derived from (`operationId`, `planHash`) via a
-  fixed rule, so the same operation re-run produces the same names.
+- **C1.** Names are deterministic but derived from `operationId`, **not** `planHash`. The frozen
+  rule is: the **journal event name** is `SHA-256(operationId) + "-" + sequence` (`D1`), and the
+  **Percona CR name** is an `operationId`-derived deterministic name. `planHash` is **not** part
+  of any object name — it is bound to the object's **annotations/`spec`** together with
+  `operationId` and `factsDigest`, so re-running the same operation yields the same names while a
+  changed `planHash` on an existing name is detectable from the object rather than the name.
 - **C2.** On create, if an object with that deterministic name already exists, the
   implementation **MUST** verify the existing object matches what **this operation itself**
   would have created — its **own** full request identity and its **first-observed**
@@ -208,8 +226,11 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
     backup-time **A**-row SHA.
 - **F5.** The verifier-recomputed byte representations are **fixed and language-neutral**, so
   a cross-language verifier can recompute them:
-  - the **schema digest** is SHA-256 of a **fixed schema descriptor** — the byte-exact,
-    normalised `CREATE TABLE backup_proof_items (...) ;` text of `F1`;
+  - the **schema digest** is SHA-256 of the **exact UTF-8 bytes** of the schema literal in `F1` —
+    the string `CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL)`
+    verbatim, **including the trailing `;`** and with **no leading whitespace and no trailing
+    newline**. There is no "normalised text" and no `(...)` abbreviation: the digest is over
+    exactly those bytes.
   - the **ordered-row SHA** is SHA-256 of the **RFC 8785 canonical serialisation** of the rows
     array `[{"id":1,"payload":"<hex>"}, …]` ordered by `id`, where each `payload` is the
     64-lowercase-hex SHA-256 of the canonical decimal `id`. No implementation-specific
@@ -302,7 +323,8 @@ only as a prose label. `SHALL` conveys a normative requirement.
 | `SPEC-P1-SCOPE-NONDESTRUCTIVE` | A4, C, F, Validation | The backup path does not destructively modify the source data it is proving (the A state is preserved and then restored); the operation *does* write test data to the source after backup (B rows, F3), so it is **not** "never mutates the source", and the restore runs in a **new namespace of the same cluster** with a **new** MySQL CR (A4), not a different cluster. |
 | `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the exact `A1` plan document field set *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
 | `SPEC-P1-APPROVAL-ED25519` | B1–B3 | Approval is an Ed25519-signed, single-use envelope with a 15-min validity window; resume across expiry is bound to the journal-persisted same verified signed envelope + canonical digest, never a fresh re-approval. |
-| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1–D5 | The journal is a chain of immutable ConfigMap events, deterministic name `SHA-256(operationId)`+ sequence, each envelope carrying `schemaVersion/operationId/sequence/type/previousEventDigest/eventDigest`; effects journaled write-ahead; unbounded growth acknowledged; on restart only resume or `BLOCKED`. |
+| `SPEC-P1-JOURNAL-CHAIN` | D2–D3 | The journal is a **hash chain**: each event envelope carries `previousEventDigest` and `eventDigest`, chaining every event to the one before it, and effects are journaled in strict write-ahead order (`event → API call → observed/reconciled event`), so evidence continuity across the chain is independently verifiable. |
+| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1, D4–D5 | The journal is **append-only and immutable**: each event is a **new** ConfigMap with `immutable: true` and deterministic name `SHA-256(operationId)` + `-` + sequence (`D1`); growth is documented as unbounded, never compacted or deleted (`D4`); on restart the reconciler only resumes or enters `BLOCKED`, never a fresh or rewound journal (`D5`). |
 | `SPEC-P1-RESUME-OR-BLOCKED` | D5 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
 | `SPEC-P1-TARGET-FENCE` | E1, E3, E5 | atomic JSON-Patch `test`+`add` fence proving the fence-mutation moment; only-own-fence release (else `FENCE_RELEASE_BLOCKED`); TOCTOU residual risk (`E2`, incl. post-fence target mutation) accepted and documented; both terminal failures emit replay-stable signed failure evidence. |
 | `SPEC-P1-DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
