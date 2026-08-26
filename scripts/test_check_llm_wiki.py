@@ -194,6 +194,63 @@ def scenario_static_no_pin_fails() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+def scenario_ref_not_pin() -> None:
+    """G. a bare `reference.ref` (mutable branch/HEAD) must NOT count as an immutable
+    pin — so the record is dynamic and must carry retrievedAt."""
+    root = make_copy()
+    idx = load_index(root)
+    rec = record_file(root, "karpathy-llm-wiki")
+    obj = json.loads(rec.read_bytes())
+    obj["kind"] = "source-repo"
+    obj["reference"] = {"type": "repo", "url": "https://github.com/example/repo",
+                        "ref": "main"}
+    obj.pop("retrievedAt", None)
+    new = write_record(rec, obj)
+    rec.unlink()
+    idx["records"]["karpathy-llm-wiki"] = f"raw/sources/karpathy-llm-wiki/{new.name}"
+    write_index(root, idx)
+    expect_fail(root, "retrievedAt")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def scenario_version_sentinel() -> None:
+    """H. `version=latest` (a mutable sentinel) is not an exact literal — record must
+    be treated dynamic and carry retrievedAt."""
+    root = make_copy()
+    idx = load_index(root)
+    rec = record_file(root, "karpathy-llm-wiki")
+    obj = json.loads(rec.read_bytes())
+    obj["kind"] = "source-repo"
+    obj["reference"] = {"type": "release", "url": "https://github.com/example/repo",
+                        "version": "latest"}
+    obj.pop("retrievedAt", None)
+    new = write_record(rec, obj)
+    rec.unlink()
+    idx["records"]["karpathy-llm-wiki"] = f"raw/sources/karpathy-llm-wiki/{new.name}"
+    write_index(root, idx)
+    expect_fail(root, "retrievedAt")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def scenario_invalid_sha() -> None:
+    """I. `sha` that is not a full-length digest must not count as an immutable pin —
+    so the record is dynamic and must carry retrievedAt."""
+    root = make_copy()
+    idx = load_index(root)
+    rec = record_file(root, "karpathy-llm-wiki")
+    obj = json.loads(rec.read_bytes())
+    obj["kind"] = "source-repo"
+    obj["reference"] = {"type": "commit", "url": "https://github.com/example/repo",
+                        "sha": "not-a-sha"}
+    obj.pop("retrievedAt", None)
+    new = write_record(rec, obj)
+    rec.unlink()
+    idx["records"]["karpathy-llm-wiki"] = f"raw/sources/karpathy-llm-wiki/{new.name}"
+    write_index(root, idx)
+    expect_fail(root, "retrievedAt")
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     scenario_pristine()
     scenario_extra_alias()
@@ -202,6 +259,9 @@ def main() -> int:
     scenario_revision_update_passes()
     scenario_delete_old_fails()
     scenario_static_no_pin_fails()
+    scenario_ref_not_pin()
+    scenario_version_sentinel()
+    scenario_invalid_sha()
 
     if failures:
         print("FAIL: test_check_llm_wiki had failures:")
@@ -209,7 +269,8 @@ def main() -> int:
             print(" -", f)
         return 1
     print("PASS: test_check_llm_wiki — pristine PASS; revision-update PASS; extra-alias, "
-          "cross-id, missing, delete-old (--base), and static-no-pin each FAIL as expected.")
+          "cross-id, missing, delete-old (--base), static-no-pin, ref-not-a-pin, "
+          "version-sentinel, and invalid-sha each FAIL as expected.")
     return 0
 
 

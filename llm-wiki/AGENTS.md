@@ -67,15 +67,19 @@ unsourced claims, dead links, and manifest/lockfile pins that disagree.
 
 ## Frozen vs dynamic sources
 
-A record is **frozen** only when it carries a **machine-verifiable immutable selector**:
-an exact `revision`, `commit`, `tag`, `version`, or `digest` under `reference` (or a
-top-level `pin`). That exact value is the identity, and no `retrievedAt` is required.
+A record is **frozen** only when it carries a **machine-verifiable immutable selector**
+under `reference` (or a top-level `pin`): an exact full-length digest (`revision` /
+`commit` / `sha` / `digest` = full 40/64-hex, or `algo:<hex>`) or an exact literal
+`tag` / `version`. That exact value is the identity, and no `retrievedAt` is required.
+`ref` is **never** a pin (a branch or `HEAD` reference is mutable). Mutable sentinels
+(`latest` / `current` / `stable` / `main` / `master` / `HEAD`) and any range / wildcard
+form (`1.x`, `>=2`, `v1.*`) are rejected.
 
-Anything without such a pin is **dynamic**, whatever its `kind`. It must record a
+Anything without such a valid pin is **dynamic**, whatever its `kind`. It must record a
 timezone-aware `retrievedAt` (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset) plus an
 optional `etag` / `lastModified`. `scripts/check_llm_wiki.py` decides frozen vs dynamic
-from the selector, not from `kind`; a static-looking `kind` with no pin is treated as
-dynamic and forced to carry `retrievedAt`.
+from the selector, not from `kind`; a static-looking `kind`, a bare `ref`, a short hash,
+or a sentinel tag/version is treated as dynamic and forced to carry `retrievedAt`.
 
 ## License / rights rule
 

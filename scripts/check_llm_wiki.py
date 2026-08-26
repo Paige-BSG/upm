@@ -8,10 +8,12 @@ Enforces Sol's acceptance rules on `llm-wiki/`:
   - `--base <git-ref>` rejects modifying or deleting a record that existed at that ref
     (only new records, with a new hash/filename, may be added);
   - every record has the required identity/license/integrity fields. A record is
-    **frozen** only if it carries a machine-verifiable immutable selector (an exact
-    revision / commit / tag / version / digest in `reference` or a `pin`). Anything
-    else — whatever its `kind` — is dynamic and MUST carry a timezone-aware
-    `retrievedAt` (an optional `etag` / `lastModified` may accompany it);
+    **frozen** only if it carries a machine-verifiable immutable selector under
+    `reference` or a `pin`: an exact full-length digest (`revision`/`commit`/`sha`/
+    `digest` = full 40/64-hex, or `algo:<hex>`) or an exact literal `tag`/`version`
+    (rejecting `latest`/`current`/`stable`/`main`/`master`/`HEAD` and any range or
+    wildcard). `ref` is never a pin. Anything else — whatever its `kind` — is dynamic
+    and MUST carry a timezone-aware `retrievedAt`;
   - `raw/index.json` is anti-forgery and points to exactly ONE **current** record per id:
     its keys are exactly the record-id set; each value is `raw/sources/<id>/<sha>.json`
     and every record's `id` equals its parent directory name;
@@ -41,11 +43,15 @@ WIKI = LLM_WIKI / "wiki"
 
 REQUIRED = ("id", "kind", "name", "upstream", "reference", "license", "rights",
             "fetched", "integrity")
-# A precise, immutable identity — an exact revision/commit/tag/version/digest. Its
-# presence marks a record frozen (no `retrievedAt` required). Its absence marks it
-# dynamic regardless of `kind` (so a page cannot relabel itself as static to bypass
-# the time fingerprint).
-IMMUTABLE_SELECTOR_KEYS = ("revision", "commit", "tag", "version", "digest", "sha", "ref")
+# A precise, immutable identity. A record is frozen only when it carries one of these
+# under `reference` or a top-level `pin`: a full-length digest (commit/revision/sha/
+# digest = full 40/64-hex, or `algo:<hex>`) or an exact literal tag/version (rejecting
+# `latest`/`current`/`stable`/`main`/`master`/`HEAD` and any range/wildcard). `ref` is
+# NEVER a pin (a branch/HEAD ref is mutable). Absence/ambiguity makes a record dynamic
+# regardless of `kind`, so a page cannot relabel itself as static to skip the time
+# fingerprint.
+FULL_DIGEST_LENGTHS = (40, 64)
+MUTABLE_SELECTOR_SENTINELS = frozenset({"latest", "current", "stable", "main", "master", "head"})
 ERRORS: List[str] = []
 
 
@@ -80,16 +86,57 @@ def git_file_at(ref: str, path: str) -> Optional[bytes]:
         return None
 
 
-def has_immutable_pin(obj) -> bool:
-    """True if the record carries a machine-verifiable exact immutable selector."""
+def is_full_digest(v: str) -> bool:
+    """True if `v` is a full-length content digest: 40/64 hex, or `algo:<hex>`.
+
+    A tag/branch name (`main`, `HEAD`, `v1.2`) is not a digest, so a short ref never
+    counts as immutable.
+    """
+    v = v.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", v) or re.fullmatch(r"[0-9a-f]{64}", v):
+        return True
+    return re.fullmatch(r"[A-Za-z0-9_+.-]+:(?:[0-9a-f]{40}|[0-9a-f]{64})", v) is not None
+
+
+def is_exact_literal(v: str) -> bool:
+    """True if `v` is a concrete tag/version literal — not a mutable sentinel or a range."""
+    v = v.strip()
+    if not v or v.lower() in MUTABLE_SELECTOR_SENTINELS:
+        return False
+    if any(ch in v for ch in "*^~<>,") or any(ch.isspace() for ch in v):
+        return False
+    # reject bare-wildcard version forms such as `1.x`, `v1.*`
+    if re.search(r"[\d.]+[xX]", v) or re.search(r"[xX][\d.]+", v):
+        return False
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", v) is not None
+
+
+def immutable_selector(obj) -> Optional[tuple]:
+    """Return (kind, value) if `obj` carries a valid exact immutable selector, else None.
+
+    Accepts a flat key/value (`revision`/`commit`/`sha`/`digest` or `tag`/`version`) or
+    an explicit `{type, value}` scheme. `ref` is deliberately not accepted — a branch /
+    `HEAD` ref is mutable. Any value that is not a full digest or an exact literal is
+    ignored, so the record falls through to dynamic (which forces `retrievedAt`).
+    """
     for container in (obj.get("reference"), obj.get("pin")):
         if not isinstance(container, dict):
             continue
-        for k in IMMUTABLE_SELECTOR_KEYS:
-            v = container.get(k)
-            if isinstance(v, str) and v.strip():
-                return True
-    return False
+        if "type" in container and "value" in container:
+            t = str(container.get("type", "")).strip().lower()
+            v = str(container.get("value", "")).strip()
+            if t in ("commit", "revision", "sha", "digest") and is_full_digest(v):
+                return (t, v)
+            if t in ("tag", "version") and is_exact_literal(v):
+                return (t, v)
+            continue  # unknown / invalid pin type cannot be used to claim frozen
+        for k, v in container.items():
+            if k in ("commit", "revision", "sha", "digest") and isinstance(v, str) \
+                    and is_full_digest(v):
+                return (k, v.strip())
+            if k in ("tag", "version") and isinstance(v, str) and is_exact_literal(v):
+                return (k, v.strip())
+    return None
 
 
 def is_tz_aware_iso(t: str) -> bool:
@@ -165,7 +212,7 @@ def validate_record_file(path: pathlib.Path) -> None:
 
     # frozen vs dynamic: a machine-verifiable immutable pin makes it frozen; otherwise
     # it is dynamic (whatever its kind) and MUST carry a timezone-aware retrievedAt.
-    frozen = has_immutable_pin(obj)
+    frozen = immutable_selector(obj) is not None
     ra = obj.get("retrievedAt")
     if not frozen:
         if not ra:

@@ -35,15 +35,18 @@ verify against a re-fetch and to avoid embedding a full unlicensed body.
 
 ## Frozen vs dynamic sources
 
-- **Frozen** — its record carries a machine-verifiable immutable selector (an exact
-  `revision`, `commit`, `tag`, `version`, or `digest` under `reference`, or a top-level
-  `pin`). The revision is the identity, so no `retrievedAt` is required. Decided from the
-  selector, **not** from `kind`.
-- **Dynamic** — no immutable selector, whatever its `kind`. It **must** carry a
-  timezone-aware `retrievedAt` (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset). An
-  `etag` / `lastModified` from the fetch may be recorded alongside it. The stored digest
-  is for that one retrieval; a later change is re-ingested as a new record (new hash,
-  new filename).
+- **Frozen** — its record carries a machine-verifiable immutable selector under
+  `reference` (or a top-level `pin`): an exact full-length digest (`revision` / `commit`
+  / `sha` / `digest` = full 40/64-hex, or `algo:<hex>`) or an exact literal `tag` /
+  `version`. The revision is the identity, so no `retrievedAt` is required. `ref` is
+  never a pin; mutable sentinels (`latest` / `current` / `stable` / `main` / `master` /
+  `HEAD`) and range / wildcard forms are rejected. Decided from the selector, **not**
+  from `kind`.
+- **Dynamic** — no valid immutable selector, whatever its `kind` (a bare `ref`, a short
+  hash, or a sentinel tag/version). It **must** carry a timezone-aware `retrievedAt`
+  (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset). An `etag` / `lastModified` from the
+  fetch may be recorded alongside it. The stored digest is for that one retrieval; a
+  later change is re-ingested as a new record (new hash, new filename).
 
 ## Validation
 

@@ -62,3 +62,17 @@ Tightened the machine contract after @Sol's update-revision simulation:
   its kind and must carry a timezone-aware `retrievedAt`.
 - Added regression tests: old + new revision with index→new must PASS; deleting the old
   record (`--base`) must FAIL; a static `kind` with no exact pin must FAIL.
+
+## 2026-08-27 refine | Immutable pin must be a real selector
+
+Tightened the frozen test after @Sol's last cut (pin typing):
+
+- `ref` is **not** an immutable pin (a branch / `HEAD` ref is mutable).
+- `commit` / `revision` / `sha` / `digest` must be a full-length digest — full 40/64-hex,
+  or `algo:<hex>` (a short hash never counts).
+- `tag` / `version` must be an exact literal; mutable sentinels (`latest` / `current` /
+  `stable` / `main` / `master` / `HEAD`) and any range / wildcard form (`1.x`, `>=2`,
+  `v1.*`) are rejected.
+- Added regression tests for the real measured values: `ref=main`, `version=latest`, and
+  `sha=not-a-sha` each FAIL (each is dynamic — missing `retrievedAt`). Existing 7
+  scenarios preserved; 10 scenarios total.
