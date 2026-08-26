@@ -16,12 +16,17 @@ usable implementation released here yet.
 - **Repository governance** — `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
   a branch-and-pull-request contract.
 - **A license** — Apache-2.0.
+- **A published Phase 1 spec** — [Phase 1 Spec v0.2 — BackupProof](/architecture/phase-1-backupproof),
+  the first product technical validation.
 
 ## What is still to come
 
-- The first implementation slice: an agent → plan → approval → backup → isolated restore →
-  evidence loop, built on the three-layer architecture. Phase 0 validates the **AI-native
-  data-service ops control plane**, not a port of earlier code.
+- **Phase 1 code** — the backup/restore slice described by the Phase 1 spec, with the
+  data-plane candidate admitted (the operator CRD / API and per-arch image digests are
+  recorded first-hand; still pending are the test-machine architecture / compatibility, the
+  MinIO image digest, the PS / XtraBackup license classification, and the client-node vs
+  k8s pairing). No runtime code is in this repository yet. Phase 1 validates the
+  **AI-native data-service ops control plane**, not a port of earlier code.
 - Product source code, released as phases land.
 - Automated gates once code exists (lint, unit, integration, build) and the existing
   docs/wiki/secret checks wired into Actions.

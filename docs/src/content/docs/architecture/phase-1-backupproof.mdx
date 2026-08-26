@@ -1,0 +1,390 @@
+---
+title: Phase 1 — BackupProof
+description: The normative Spec v0.2 for UPM's first product technical validation — a backup/restore proof on the three-layer architecture.
+---
+
+**Phase 1 — BackupProof** is UPM's first product technical validation. It is a
+**validation**, not a delivered capability and not production high availability. It proves
+the three-layer architecture end to end on one operation — a backup — with an isolated
+restore that proves the backup is real.
+
+> **Spec version.** This page is the normative **Spec v0.2**. It is written to constrain an
+> implementation: each numbered rule below is a requirement an implementer must satisfy and
+> a reviewer can test. Public acceptance facts are written on this page, in the public
+> project docs, and in the LLM wiki's pinned records; no internal process identity is
+> implied.
+
+The verified slice is:
+
+`intent → live facts → plan/risk → signed approval → backup → isolated restore → SQL/data proof → offline evidence`
+
+## Runtime and language
+
+UPM's own Phase 1 code is **TypeScript on Node 22, and TypeScript only**. The runtime is
+layered as:
+
+1. **Agent / intent** — the in-product agent, built on the **Pi Agent** runtime
+   ([`earendil-works/pi`](https://github.com/earendil-works/pi), MIT; `pi-agent-core` +
+   `pi-ai`). The agent loop, tool calling, and model abstraction come from Pi; UPM does
+   **not** carry Pi's coding-agent `bash`, file, or process permissions into production.
+2. **Domain harness** — the security contract UPM spells itself (typed tools, a realtime
+   fact snapshot, permissions, risk-tiering, approval, idempotency, timeouts, evidence,
+   audit). This is where the normative contract below lives.
+3. **Deterministic execution** — a narrow adapter over the external operator using
+   [`@kubernetes/client-node`](https://github.com/kubernetes-client/javascript). A typed,
+   thin client; not a shell, not cluster-admin.
+
+**Long-term** the self-built languages are **TypeScript + Rust**. Rust is introduced only
+when UPM ships its own reconcile / finalizer / leader-election operator. Phase 1 does not
+introduce Rust.
+
+## Data-plane candidate
+
+The data plane is an external component UPM drives, not UPM source code:
+
+- **Percona Server for MySQL Operator** v1.2.0 — the non-PXC, group-replication variant.
+- **Percona Server for MySQL** 8.4.10-10.1.
+- **Percona XtraBackup**.
+- **MinIO** — object storage for the backup, used as a replaceable **test** S3, never
+  distributed as part of UPM.
+
+The data-plane component images are **external** software — **not** UPM's source — so it is
+not accurate to write "UPM uses Go". UPM's own code is TypeScript/Node 22.
+
+**Pin state.** The operator tag commit, the `ps.percona.com/v1` API and its three kinds,
+the CRD bytes/blob/SHA-256, and the per-architecture image digests for the operator, server,
+xtrabackup, HAProxy, router, and orchestrator are all recorded **first-hand** in the pinned
+LLM wiki records (`llm-wiki/`). The items still **pending** are: the test-machine
+architecture / compatibility, the MinIO image digest, the PS / XtraBackup license
+classification (SPDX), and the official client-node vs k8s 1.35 pairing. Entries remain
+`candidate/pending admission` for **admission**, not because the identifiers are unknown.
+
+## Normative contract
+
+Rules are labelled `A1`, `B1`, … so a reviewer, implementer, or test can cite them; the
+frozen `SPEC-P1-*` invariant IDs that the code/test contract references are mapped in
+section J. Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for
+requirements, **MAY** for optional, **SHOULD** for guidance.
+
+### A. Plan, identity, and `planHash`
+
+- **A1.** The plan is a canonical JSON document (`PlanDocument`) with an **exact versioned
+  field set**; every field is required and enters the RFC 8785 bytes (`A2`). The full **root
+  key set** is exactly, in this form:
+
+  ```json
+  ["schemaVersion","operationId","actor","clusterUid","targetNamespace","targetNamespaceUid",
+   "restoreNamespace","restoreNamespaceUid","requiredApproverRole","requiredApproverSubject",
+   "target","factsSnapshotId","factsDigest","actions","parameters","artifactDestination",
+   "risk","timeoutMs","budget","stopConditions","approvalPolicyVersion"]
+  ```
+
+  `target` is an object with the **exact** keys (the identities recorded in `A4`):
+
+  ```json
+  ["namespace","name","uid","generation","resourceVersion","specDigest"]
+  ```
+
+  `target.namespace` **MUST** equal `targetNamespace`: the frozen `TargetRef` includes
+  `namespace`, and the schema admission enforces that equality. A `target` object that omits
+  `namespace` is not a compliant exact key set.
+
+  The plan is **not** a free-form blob, and it is **not** satisfied by two different schemas
+  that merely name the same semantics: a `PlanDocument` is compliant only if its root key set is
+  exactly the first list above and `target`'s key set is exactly the second. `clusterUid` is the
+  one cluster identity; `targetNamespace`/`targetNamespaceUid` and
+  `restoreNamespace`/`restoreNamespaceUid` are the two namespaces of that cluster; and
+  `requiredApproverRole`/`requiredApproverSubject` are the approver binding checked in `B1`.
+- **A2.** `planHash` **SHALL** be the SHA-256, encoded as 64 lowercase hex, of the plan
+  document serialised canonically per **RFC 8785 (JSON Canonicalization Scheme, JCS)** — not
+  a language-specific `json.dumps`. JCS is the portable canonical form (UTF-16-based key
+  order, ECMAScript number serialisation, no insignificant whitespace); an implementation
+  **MUST** use an RFC 8785 canonicaliser, because `planHash` equality is only meaningful if
+  two implementations produce byte-identical bytes for the same plan. Equal canonical bytes
+  ⇒ equal `planHash`; a changed plan or a different serialisation ⇒ a different `planHash`.
+- **A3.** `planHash` is bound to an **actor**, and `actor` is a **required field of the
+  `PlanDocument` itself** (`A1`), so it is part of the canonical bytes that `A2` hashes. The
+  outer request's actor **MUST** equal the plan's actor item-by-item; if they differ the
+  operation is invalid. There is no valid approval for a `planHash` whose request actor does
+  not equal the plan actor.
+- **A4.** The plan **SHALL** record the single identity the operation runs inside, and
+  `planHash` covers all of it. This slice runs in **one** Kubernetes cluster, across
+  **two** namespaces, creating a **new** MySQL CR for the restore:
+  - the one Kubernetes cluster identity (its `kube-system` namespace **UID**);
+  - the **source** namespace **UID** and the **restore** namespace **UID** (two distinct
+    namespaces in that same cluster);
+  - the source **target object** identity: its `namespace`, `name`, `UID`, `generation`,
+    `resourceVersion`, and `specDigest` — where `specDigest` is SHA-256 of the target object's
+    **spec as captured in the plan** (the approved spec snapshot), not a claim that the object's
+    spec is immutable (it carries `resourceVersion` and `generation`, both mutable); and
+    `target.namespace` **MUST** equal `targetNamespace` (`A1`);
+  - the **restore object** identity: the deterministic `name` (C1) and the expected spec of
+    the new MySQL CR created in the restore namespace, which the operation hashes.
+- **A5.** `risk`, `timeoutMs`, `budget`, and `stopConditions` give the per-action and total
+  time/limit budgets and stop conditions the harness enforces; `approvalPolicyVersion` names
+  the policy that gates whether a labelled action may run.
+
+### B. Approval envelope
+
+- **B1.** Approval is a single-use **Ed25519**-signed envelope (`APPROVAL-ED25519`) that
+  **MUST** bind the `actor` (A3), the `planHash` (A2), and a `subject`/`role` pair. A trusted
+  key maps to a `subject`, and a `subject` is granted one or more `role`s that bound the
+  allowed actions; the envelope is issued for that trusted key→subject→role chain and is
+  only honoured for the `actor` + `planHash` it names.
+- **B2.** The signed envelope carries a **15-minute validity window** from issue to expiry.
+  It is a **signed** envelope (B1); there is no such thing as a long-lived unsigned approval.
+  An **unconsumed** envelope **MUST NOT** be first-consumed after its expiry — beyond the
+  window the envelope is void for any *first* use. Only a **consumed** exact envelope for the
+  operation may be used to resume (`B3`).
+- **B3.** The signed envelope is **single-use** and **journal-bound** for resume. Once the
+  approval and its canonical plan digest are recorded in the immutable journal, an operation
+  that resumes across the 15-minute expiry **MUST** use that same journal-persisted **verified
+  signed envelope** and **canonical digest** — it **MUST NOT** issue a fresh re-approval.
+  Restart is therefore *resume with the same approved envelope/digest* (D), not
+  re-authorisation; it never extends the life of a different `planHash`.
+
+### C. Deterministic create and `AlreadyExists`
+
+- **C1.** Names are deterministic but derived from `operationId`, **not** `planHash`. The frozen
+  rule is: the **journal event name** is `upm-evt-<sha256-32>-<seq6>` (`D1`) — the literal prefix
+  `upm-evt-`, the first 32 lowercase hex characters of `SHA-256(operationId)`, a `-`, and the
+  sequence zero-padded to 6 decimal digits (`000001`, `000002`, …) — and the **Percona CR name**
+  is an `operationId`-derived deterministic name. These are 47-char (8 + 32 + 1 + 6) DNS-1123
+  labels, within the 63-char limit. `planHash` is **not** part of any object name — it is bound
+  to the object's **annotations/`spec`** together with `operationId` and `factsDigest`, so
+  re-running the same operation yields the same names while a changed `planHash` on an existing
+  name is detectable from the object rather than the name.
+- **C2.** On create, if an object with that deterministic name already exists, the
+  implementation **MUST** verify the existing object matches what **this operation itself**
+  would have created — its **own** full request identity and its **first-observed**
+  server/status/artifact identity (the spec it submitted, plus the `UID` / `generation` /
+  `resourceVersion` / observed `status` and artifact reported at first observation). This is
+  **not** the source target identity (A4): idempotency is keyed to the created object's own
+  request + observed state, so a benign re-apply is recognised only when the already-created
+  object is the one this operation made. A mismatch **MUST** fail the operation.
+  `AlreadyExists` is therefore **not** a blanket success — identity is checked to the exact
+  created revision.
+
+### D. Immutable journal and restart
+
+- **D1.** The operation log **SHALL** be an append-only, immutable chain of **events**, each
+  stored as a **new ConfigMap with `immutable: true`** under the control-plane ServiceAccount
+  (`I2`), so a past event can never be edited. The event ConfigMap **deterministic name** is
+  `upm-evt-<sha256-32>-<seq6>` (see `C1`): `upm-evt-` + the first 32 lowercase hex of
+  `SHA-256(operationId)` + `-` + the sequence zero-padded to 6 decimals (`000001`, …) — a 47-char
+  DNS-1123 label. Re-runs address the same chain and the sequence is monotonic.
+- **D2.** Each event envelope **MUST** carry exactly: `schemaVersion`, `operationId`,
+  `sequence`, `type`, `previousEventDigest`, `eventDigest` — plus the event-specific payload.
+  The event digests chain each event to the previous one (hash chain). The full closure
+  (`actor`, `facts`, `CR` / `artifact` / `oracle` / `timeline` / `exact pins`) is part of the
+  terminal **EvidenceManifest** (`G4`); it is **not** required to be repeated in every
+  intermediate event.
+- **D3.** Every external effect follows a strict journaled order: **write-ahead event → API
+  call → observed / reconciled event**. The write-ahead event is recorded before the effect is
+  dispatched, and the observed / reconciled event after the API returns; at any boundary
+  crash the reconciler resumes or blocks per `D5`.
+- **D4.** The journal is not open-ended by intent: unbounded growth is an acknowledged
+  boundary, written here so it is a documented limitation rather than a hidden one.
+- **D5.** On restart, the reconciler reads the persisted journal state and **MUST** do only
+  one of: **resume** the in-flight operation from the last persisted state (reconcile), or
+  enter **BLOCKED**. It **MUST NOT** silently start a fresh journal or rewind the chain;
+  that would break evidence continuity.
+
+### E. Version fence, residual risk, and finalisation
+
+- **E1.** The fence is a **write precondition applied atomically at the first mutation**: the
+  first mutation **MUST** be an atomic JSON Patch that `test`s the approved `resourceVersion`
+  (and the required annotation state) then `add`s `upm.io/backup-proof-fence=operationId:planHash`.
+  Success proves only that, **at the fence-mutation moment**, the object's version matched the
+  approved version (`A4`) — **not** that it did at some earlier read. It is an
+  optimistic-concurrency guard, **not** a lock.
+- **E2.** **Residual risk (must be stated, not hidden).** The fence only proves the approved
+  version **at the fence mutation**. It does not freeze the object and cannot eliminate a
+  **TOCTOU** where an external administrator, after the fence, modifies **the target object
+  itself** (its spec / `resourceVersion`), or a **related** object (the actual database,
+  operator state, or namespace). The fence does not make two separately-managed objects atomic,
+  and it cannot stop a privileged actor from mutating the target after it is set. This risk is
+  accepted and documented, not claimed away.
+- **E3.** The fence **MUST** be released only by the same actor/operation that set it. Any
+  attempt to release a fence that is not its own, or to proceed past an un-releasable fence,
+  **MUST** terminate with `FENCE_RELEASE_BLOCKED`, not a silent continue.
+- **E4.** The terminal verdict (success / failure) **MUST** be **replay-stable**: given the
+  same ordered journal entries and their digests, any replayer or verifier computes the
+  same terminal outcome deterministically. The verdict function **MUST NOT** depend on
+  wall-clock time or unrecorded randomness.
+- **E5.** The two terminal failures **MUST** both produce replay-stable signed **failure**
+  evidence: `TARGET_DRIFTED_DURING_OPERATION` (`H1`) and `FENCE_RELEASE_BLOCKED` (`E3`). A
+  `FENCE_RELEASE_BLOCKED` **MUST NOT** write an `EvidenceClosed` record that a replayer could
+  interpret as success; it writes failure evidence only.
+
+### F. A/B SQL oracle
+
+- **F1.** The proof targets a fixed table:
+  `CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL);`
+- **F2.** Load the **A** rows **before** the backup: `id` = 1..1000, `payload` = SHA-256 of
+  the canonical decimal `id` (64 lowercase hex).
+- **F3.** After the operation records **Backup Succeeded**, write the **B** rows: `id` =
+  1001..1100, `payload` = SHA-256 of the canonical decimal `id`.
+- **F4.** Restore **MUST** produce a database whose oracle output equals the backup-time
+  **A** state and **MUST NOT** contain the post-backup **B** state. Concretely, against the
+  restored database the verifier checks all of:
+  - the stored **schema digest** matches the recorded backup-time schema digest;
+  - `COUNT(*)` = **1000**;
+  - the exact `id` set = `1..1000` (no row has `id` = `1001..1100`);
+  - the **ordered-row SHA** (SHA-256 over all rows ordered by `id`) = the recorded
+    backup-time **A**-row SHA.
+- **F5.** The verifier-recomputed byte representations are **fixed and language-neutral**, so
+  a cross-language verifier can recompute them:
+  - the **schema digest** is SHA-256 of the **exact UTF-8 bytes** of the schema literal in `F1` —
+    the string `CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL);`
+    verbatim — **including the trailing `;`** — with **no leading whitespace and no trailing
+    newline**. The digest is over exactly those bytes; there is no "normalised text" and no
+    `(...)` abbreviation.
+  - the **ordered-row SHA** is SHA-256 of the **RFC 8785 canonical serialisation** of the rows
+    array `[{"id":1,"payload":"<hex>"}, …]` ordered by `id`, where each `payload` is the
+    64-lowercase-hex SHA-256 of the canonical decimal `id`. No implementation-specific
+    separator or whitespace, no locale-dependent formatting.
+
+### G. Evidence vs approval; provenance
+
+- **G1.** Evidence and Approval are signed **separately** (distinct envelopes / keys). An
+  approval authorises an action; evidence records the observed result. They are **not**
+  combined into one signature, which would conflate authority with observation.
+- **G2.** An evidence record **MUST** state exactly what it proves. Its claim is limited to
+  **bytes and integrity** (the hash-chain / digest binding) plus the **trusted key–source
+  binding** (the reading key is trusted for that source). It does **not** provide human
+  non-repudiation: a human (e.g. a DBA) may have intervened, and evidence is machine
+  provenance, not a human attestation.
+- **G3.** Large evidence bodies (full backups, logs, big artifact dumps) are **externalised**
+  outside the journal; the journal stores only the **digest + signature** of each external
+  body, so integrity is preserved without bloating the chain.
+- **G4.** The offline closure **MUST** be a **signed success/failure EvidenceManifest** that
+  **MUST explicitly bind** — not merely infer from the approval — `operationId`, `planHash`,
+  the CR `UID` / `generation`, and the real artifact identity and its `digest`. It references
+  the **approval** (`planHash` + `actor` + signature), the journal **root** and **head**
+  digests, and the signed set of `actor`, `intent`, `facts`, the cluster + namespace + each CR
+  identity, target **pre/post**, the oracle, the timeline, the exact pins, `keyId`, and
+  `signature` — so an offline verifier can reconstruct the whole chain: approval → journal
+  root → journal head → the signed manifest, recomputing the oracle bytes from `F5`.
+
+### H. Subject-verifying failures are terminal, not silent
+
+- **H1.** A live target re-read that has drifted from the approved plan is a **real,
+  evidence-backed terminal failure** state. `TARGET_DRIFTED_DURING_OPERATION` names the
+  failure (the target changed post-approval) and is recorded as an evidence-backed failure
+  with the drift diff, **not** worded as "nothing executed".
+
+### I. Security, RBAC, and authoring
+
+- **I1. Agent surface.** The agent has **no** `bash`, `kubectl`, `kubeconfig`, or database
+  admin access. It sees only the typed domain tools the harness exposes. The adapter is a
+  thin typed client, never a shell, never cluster-admin.
+- **I2. Control-plane ServiceAccount (`upm-system`).** Exact RBAC (namespace × resource ×
+  verb):
+
+  | Namespace | Resource | Verbs |
+  |---|---|---|
+  | `upm-system` | `leases` (`coordination.k8s.io`) | `get`, `create`, `update` (or `patch`); **never `delete`** |
+  | `upm-system` | `configmaps` (the journal) | `create`, `get`, `list`; **never `update` / `patch` / `delete`** |
+  | anything else | — | none |
+
+  The Lease needs `update`/`patch` so it can renew every 10s (`LEASE-NOT-SECURITY`); the
+  journal ConfigMap is append-only via new revisions, so it is `create`/`get`/`list` only.
+  It **MUST NOT** act on any resource outside `upm-system`.
+
+- **I3. Product ServiceAccount (data plane).** **Least privilege** — never cluster-scoped.
+  Exact matrix (all Percona resources are `ps.percona.com/v1`):
+
+  | Namespace | Resource | Verbs |
+  |---|---|---|
+  | source | `perconaservermysqls` (the source target) | `get`, `patch` — the latter writes the `resourceVersion` fence (`TARGET-FENCE`) |
+  | source | `perconaservermysqlbackups` | `create`, `get`, `watch` |
+  | restore | `perconaservermysqls` (new MySQL for restore) | `create`, `get`, `watch` |
+  | restore | `perconaservermysqlrestores` | `create`, `get`, `watch` |
+  | any namespace | `pods`, `secrets`, a blanket CR `*` / `update` | **none** — not granted |
+
+  No `pods` / `secrets`, and no blanket CR `update`, is granted. The external operator (not
+  the UPM adapter) holds the Pod permissions; the adapter is granted only what its own real
+  API path needs — fence the source target, create / read / watch the Backup, and create /
+  read / watch the restore target + Restore.
+- **I4. Lease.** The Lease is fixed at **30s** with a **10s** renewal. The Lease only
+  reduces contenders; it is **not** a safety mechanism — safety comes from the harness
+  contract (approval + fence + drift fail-closed), never from the Lease.
+- **I5. Authoring rule (applies to UPM-authored source and tests).** Authored code **MUST
+  NOT** contain `//` line comments or block / JSDoc comments, **MUST NOT** use
+  `@ts-ignore` / `@ts-expect-error`, and **MUST NOT** carry eslint / coverage / bundler
+  pragmas (`/* eslint-disable */`, `/* istanbul ignore next */`, `/* @__PURE__ */`,
+  `//# sourceMappingURL=`), and similar. A shebang line (`#!`) **MAY** appear. The
+  rationale is written in this Spec, not threaded through source comments.
+- **I6.** Every code/test **invariant ID** referenced in source or tests **MUST** resolve to
+  a real invariant defined in this Spec (or in a public acceptance record that accompanies
+  it). No dangling IDs. The `SPEC-P1-*` family below is the canonical frozen set; every ID
+  resolves to the rule that defines it.
+
+### J. Frozen invariant IDs
+
+Each ID below is a frozen, machine-resolvable identifier the code/test contract references
+(`I6`). The canonical **exact** form is **`SPEC-P1-<NAME>`**; the short `<NAME>` is used
+only as a prose label. `SHALL` conveys a normative requirement.
+
+| Exact invariant ID (`SPEC-P1-*`) | Defined by | Normative meaning |
+|---|---|---|
+| `SPEC-P1-SCOPE-NONDESTRUCTIVE` | A4, C, F, Validation | The backup path does not destructively modify the source data it is proving (the A state is preserved and then restored); the operation *does* write test data to the source after backup (B rows, F3), so it is **not** "never mutates the source", and the restore runs in a **new namespace of the same cluster** with a **new** MySQL CR (A4), not a different cluster. |
+| `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the exact `A1` plan document field set *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
+| `SPEC-P1-APPROVAL-ED25519` | B1–B3 | Approval is an Ed25519-signed, single-use envelope with a 15-min validity window; resume across expiry is bound to the journal-persisted same verified signed envelope + canonical digest, never a fresh re-approval. |
+| `SPEC-P1-JOURNAL-CHAIN` | D2–D3 | The journal is a **hash chain**: each event envelope carries `previousEventDigest` and `eventDigest`, chaining every event to the one before it, and effects are journaled in strict write-ahead order (`event → API call → observed/reconciled event`), so evidence continuity across the chain is independently verifiable. |
+| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1, D4–D5 | The journal is **append-only and immutable**: each event is a **new** ConfigMap with `immutable: true` and deterministic name `upm-evt-<sha256-32>-<seq6>` (`D1`, see `C1`); growth is documented as unbounded, never compacted or deleted (`D4`); on restart the reconciler only resumes or enters `BLOCKED`, never a fresh or rewound journal (`D5`). |
+| `SPEC-P1-RESUME-OR-BLOCKED` | D5 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
+| `SPEC-P1-TARGET-FENCE` | E1, E3, E5 | atomic JSON-Patch `test`+`add` fence proving the fence-mutation moment; only-own-fence release (else `FENCE_RELEASE_BLOCKED`); TOCTOU residual risk (`E2`, incl. post-fence target mutation) accepted and documented; both terminal failures emit replay-stable signed failure evidence. |
+| `SPEC-P1-DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
+| `SPEC-P1-ORACLE-AB` | F1–F5 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows; digest bytes are the fixed `F5` canonical representation. |
+| `SPEC-P1-EVIDENCE-SIGN` | G1–G4 | Evidence signed separately from approval; large bodies externalised (journal stores digest + signature); signed success/failure closure references approval + journal root/head + the full signed set. |
+| `SPEC-P1-LEASE-NOT-SECURITY` | I4 | Lease fixed 30s / renew 10s; reduces contention only, never a safety mechanism. |
+| `SPEC-P1-AGENT-NO-PRIVILEGE` | I1 | The agent has no `bash` / `kubectl` / `kubeconfig` / DB admin access. |
+| `SPEC-P1-NO-COMMENT` | I5–I6 | Authored source/tests forbid `//`, block/JSDoc comments, `@ts-ignore`/`@ts-expect-error`, and pragmas; a shebang is allowed; every invariant ID resolves. |
+
+## What "real" validation means here
+
+The proof uses a fixed set of **synthetic data** (the A/B oracle of F1–F4) backed up to
+MinIO, then:
+
+1. Write more data (B rows, F3) **after** the backup has been taken — an intentional,
+   journaled source-side test effect, not a hidden mutation.
+2. **Restore to a different namespace** in the **same** cluster, creating a **new** MySQL CR
+   (A4) — one cluster identity, two namespaces, one new CR.
+3. Verify the **backup-time A state** with the fixed SQL oracle (F4), and confirm the
+   **offline evidence** is present (G4); the post-backup B rows are not.
+
+This shows the backup captured a real, consistent snapshot, restored somewhere isolated (a
+fresh namespace + new MySQL CR in the same cluster), and produced auditable, signed evidence —
+without overwriting or deleting **A**, without an in-place restore, and without a destructive
+source mutation (the only source write is the intentional **B** rows of `F3`).
+
+## Non-goals (Phase 1)
+
+Out of scope for this slice, and not claimed:
+
+- In-place production restore.
+- Point-in-time recovery.
+- High availability / failover.
+- Scale-out.
+- Upgrade.
+- Multiple engines.
+- Automatic cleanup.
+- A full web UI.
+- Cloud-provider integrations.
+- A self-built MySQL Operator.
+
+## Numbering
+
+**Phase 1 = BackupProof, the product technical validation.** The base repository /
+documentation / knowledge base are **foundation**, not a product phase. Market interviews
+and requirements-validation writing are a **parallel discovery track**. The BackupProof
+slice is not called "Phase 0".
+
+## Where the detail lives
+
+Every external resource and open-source component referenced here is pinned and
+license-aware in the agent LLM wiki (`llm-wiki/` in this repository). The
+[related projects](/reference/related-projects) page lists the same candidates from a
+human-facing angle.

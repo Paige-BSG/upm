@@ -29,8 +29,37 @@ anchor it: one for the problem space, and one as a neutral comparison baseline.
 
 ## The documentation stack
 
-- **Nimbus Docs** (`cloudflare/nimbus`) — the docs framework this site is built on. It is
-  a meta-tool of this repository, not UPM tech stack, and is described in the LLM wiki.
-- **Pi Agent** (`earendil-works/pi`) — the running runtime the in-product agent is built
-  on. It is UPM's intended product stack and is ingested into the LLM wiki when the
-  tech-stack phase lands.
+- **Nimbus Docs** ([`cloudflare/nimbus`](https://github.com/cloudflare/nimbus)) — the docs
+  framework this site is built on. It is a meta-tool of this repository, not UPM tech
+  stack, and is described in the LLM wiki.
+- **Pi Agent** ([`earendil-works/pi`](https://github.com/earendil-works/pi), MIT) — the agent
+  runtime the in-product agent is built on. It is UPM's product stack and is recorded in
+  the LLM wiki (pinned to `v0.84.3`).
+- **Kubernetes Client Node**
+  ([`@kubernetes/client-node`](https://github.com/kubernetes-client/javascript), Apache-2.0) —
+  the narrow Kubernetes client the Phase 1 deterministic execution layer drives the external
+  operator through; UPM's own code is TypeScript on Node 22, not a shell or cluster-admin.
+  Recorded in the LLM wiki pinned to `2.0.0`.
+
+## Phase 1 data-plane candidate
+
+The Phase 1 backup/restore slice drives an **external** data plane, not UPM source. These
+are recorded in the LLM wiki as `candidate/pending admission`. The operator tag commit, the
+`ps.percona.com/v1` API and its kinds, the CRD bytes/SHA-256, and the per-arch image digests
+are recorded first-hand; still pending are the test-machine architecture / compatibility, the
+MinIO image digest, the PS / XtraBackup license classification, and the official client-node
+vs k8s pairing:
+
+- **Percona Server for MySQL Operator** (v1.2.0, non-PXC, group replication) —
+  [`percona-server-mysql-operator`](https://github.com/percona/percona-server-mysql-operator).
+- **Percona Server for MySQL** (8.4.10-10.1) —
+  [`percona-server`](https://github.com/percona/percona-server).
+- **Percona XtraBackup** — [`percona-xtrabackup`](https://github.com/percona/percona-xtrabackup).
+- **MinIO** — [`minio`](https://github.com/minio/minio).
+
+None of these are UPM source; the data-plane component images are external software. UPM's
+own Phase 1 code is TypeScript on Node 22.
+
+**Future.** For UPM's own Rust operator, the client library is released as
+[`kube-rs`](https://github.com/kube-rs/kube-rs) (Apache-2.0); Rust enters the stack once
+UPM ships its own reconcile / finalizer / leader-election operator.

@@ -30,9 +30,11 @@ agent acting through a shell.
    and orchestrates; the harness enforces boundaries. It is the boundary that keeps the
    agent from reaching a kubeconfig, a shell, or raw database credentials directly.
 
-3. **Deterministic execution** — the underlying open-source operators / controllers that
-   actually carry out backup, restore, failover, and upgrade. The agent may plan and
-   request; the harness gates; the deterministic controllers commit the change.
+3. **Deterministic execution** — the code that actually carries out backup, restore,
+   failover, and upgrade. In Phase 1 this is a narrow adapter over an **external** operator
+   ([`@kubernetes/client-node`](https://github.com/kubernetes-client/javascript)) — not
+   UPM's own controller. UPM's own deterministic code is TypeScript on Node 22. See
+   [Phase 1 — BackupProof](/architecture/phase-1-backupproof).
 
 ## Boundaries
 
@@ -40,8 +42,26 @@ agent acting through a shell.
   permission system; it inherits the launcher's. UPM therefore provides the production
   permission model in its harness; in-product the agent defaults to the smallest-scoped
   domain tools, not cluster-admin access.
-- **The first proof** is the agent → plan → approval → backup → isolated restore →
-  evidence loop on these three layers. It is a validation, not a release.
+- **The first proof is Phase 1 — BackupProof** (Spec v0.2): the agent → plan → signed
+  approval → backup → isolated restore → evidence loop on these three layers. It is a
+  product technical validation, not a release or production high availability.
+- **Security boundaries.** The agent has no `bash`, `kubectl`, `kubeconfig`, or database
+  admin access. The ServiceAccounts are least-privilege: the control plane gets only
+  `create`/`get`/`list` on the journal ConfigMap and `get`/`create`/`update` on a Lease in
+  `upm-system`; the data-plane adapter gets only `get`/`patch` on the source target,
+  `create`/`get`/`watch` on the Backup, and `create`/`get`/`watch` on the restore target +
+  Restore — never Pods, Secrets, or a blanket CR update. Approval is a **signed one-time
+  token bound to `planHash`** that expires
+  after 15 minutes; drift fails closed (`TARGET_DRIFTED_DURING_OPERATION`); `operationId`
+  is idempotent; the journal is an immutable hash chain.
+- **Data plane is a candidate.** Phase 1 drives an **external** Percona Server for MySQL
+  Operator (non-PXC, group replication) plus Percona Server 8.4.10-10.1, XtraBackup, and
+  MinIO. These are not UPM source; the operator tag commit, `ps.percona.com/v1` / kinds,
+  the CRD bytes/SHA-256, and the per-arch image digests are recorded first-hand, and the
+  remaining open items are the test-machine arch / compatibility, the MinIO image digest,
+  the PS / XtraBackup license classification, and the client-node vs k8s pairing.
+- **BackupProof is a versioned API / JSON Schema**, not a universal DSL. No UPM CRD is
+  frozen by this page.
 - Future components (the specific CRDs and manifest shapes) are **not** fixed by this
   page. They are decided in later phases and recorded here only once agreed; the design
   holds today, the component names do not.
