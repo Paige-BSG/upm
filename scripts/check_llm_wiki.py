@@ -126,7 +126,7 @@ def validate_record_file(path: pathlib.Path) -> None:
 
 
 def main() -> int:
-    global REPO
+    global REPO, LLM_WIKI, RAW_SOURCES, WIKI
     args = list(sys.argv[1:])
     base_ref: Optional[str] = None
     if "--base" in args:
