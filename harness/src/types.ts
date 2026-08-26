@@ -26,6 +26,11 @@ export const LEASE_DURATION_MS = 30_000;
 export const LEASE_RENEW_MS = 10_000;
 export const SCHEMA_VERSION = "phase1-v0.2" as const;
 export const PHASE1_BUDGET = "size=1" as const;
+export const PHASE1_ACTIONS = ["backup", "isolated-restore"] as const;
+export const PHASE1_RISK = "non-destructive" as const;
+export const PHASE1_POLICY = "v0.2" as const;
+export const PHASE1_STOP = ["unapproved", "drift", "lease-loss"] as const;
+export const PHASE1_DESTINATION_PREFIX = "s3://" as const;
 
 export const PERCONA_KINDS = [
   "PerconaServerMySQL",
@@ -57,6 +62,17 @@ export type Permission = {
 export type Actor = {
   actorId: string;
   rules: readonly Permission[];
+};
+
+export type TrustedApproval = {
+  publicKeyPem: string;
+  subject: string;
+  role: string;
+};
+
+export type TrustedKeys = {
+  approval: Record<string, TrustedApproval>;
+  execution: { keyId: string; publicKeyPem: string; privateKeyPem: string };
 };
 
 export type TargetRef = {
@@ -127,19 +143,24 @@ export type DenialCode =
   | "TARGET_DRIFTED_DURING_OPERATION"
   | "ORACLE_FAILED";
 
-export type JournalEventType =
-  | "IntentAccepted"
-  | "ApprovalConsumed"
-  | "FenceWriteAhead"
-  | "FenceSet"
-  | "BackupWriteAhead"
-  | "BackupCreated"
-  | "RestoreWriteAhead"
-  | "RestoreClusterCreated"
-  | "RestoreCreated"
-  | "FenceReleaseWriteAhead"
-  | "EvidenceClosed"
-  | "FenceReleaseBlocked";
+export const JOURNAL_EVENT_TYPES = [
+  "IntentAccepted",
+  "ApprovalConsumed",
+  "FenceWriteAhead",
+  "FenceSet",
+  "BackupWriteAhead",
+  "BackupCreated",
+  "SetBWriteAhead",
+  "SetBApplied",
+  "RestoreWriteAhead",
+  "RestoreClusterCreated",
+  "RestoreCreated",
+  "FenceReleaseWriteAhead",
+  "EvidenceClosed",
+  "FenceReleaseBlocked",
+] as const;
+
+export type JournalEventType = (typeof JOURNAL_EVENT_TYPES)[number];
 
 export type JournalPhase =
   | "empty"
@@ -149,6 +170,8 @@ export type JournalPhase =
   | "fenced"
   | "backup_wa"
   | "backed_up"
+  | "setb_wa"
+  | "setb_applied"
   | "restore_wa"
   | "restore_cluster"
   | "restored"
@@ -165,6 +188,21 @@ export type JournalEvent = {
   previousEventDigest: string | null;
   eventDigest: string;
   payload: Record<string, string>;
+};
+
+export type EffectIdentity = {
+  kind: string;
+  namespace: string;
+  name: string;
+  uid: string;
+  generation: number;
+};
+
+export type EvidencePin = {
+  id: string;
+  admission: string;
+  candidate: string;
+  digest: string;
 };
 
 export type EvidenceManifest = {
@@ -186,6 +224,7 @@ export type EvidenceManifest = {
   backupArtifactDigest: string;
   observedSchemaDigest: string;
   artifactDigest: string;
+  artifactDestination: string;
   oracle: {
     schemaDigest: string;
     count: number;
@@ -194,6 +233,42 @@ export type EvidenceManifest = {
     orderedRowHash: string;
     setBAbsent: boolean;
   };
+  intent: {
+    operationId: string;
+    planHash: string;
+    factsSnapshotId: string;
+    factsDigest: string;
+    startedAtMs: number;
+    deadlineMs: number;
+  };
+  facts: {
+    snapshotId: string;
+    digest: string;
+    clusterUid: string;
+    targetNamespaceUid: string;
+    restoreNamespaceUid: string;
+    target: TargetRef;
+  };
+  effects: {
+    backup: EffectIdentity;
+    restoreCluster: EffectIdentity;
+    restore: EffectIdentity;
+  };
+  timeline: {
+    startedAtMs: number;
+    deadlineMs: number;
+    closedAtMs: number;
+  };
+  pins: readonly EvidencePin[];
+  trustIdentity: {
+    approvalKeyId: string;
+    executionKeyId: string;
+    approvalPolicyVersion: string;
+    approvalSubject: string;
+    approvalRole: string;
+  };
+  factsSnapshotId: string;
+  factsDigest: string;
   driftedDuring: boolean;
   verdict: DenialCode | "OK";
   pinsDigest: string;

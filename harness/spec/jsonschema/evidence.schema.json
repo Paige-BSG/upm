@@ -22,7 +22,16 @@
     "backupArtifactDigest",
     "observedSchemaDigest",
     "artifactDigest",
+    "artifactDestination",
     "oracle",
+    "intent",
+    "facts",
+    "effects",
+    "timeline",
+    "pins",
+    "trustIdentity",
+    "factsSnapshotId",
+    "factsDigest",
     "driftedDuring",
     "verdict",
     "pinsDigest",
@@ -72,6 +81,7 @@
     "backupArtifactDigest": { "type": "string", "minLength": 1 },
     "observedSchemaDigest": { "type": "string", "minLength": 1 },
     "artifactDigest": { "type": "string", "minLength": 1 },
+    "artifactDestination": { "type": "string", "minLength": 1 },
     "oracle": {
       "type": "object",
       "additionalProperties": false,
@@ -85,6 +95,126 @@
         "setBAbsent": { "type": "boolean" }
       }
     },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "planHash", "factsSnapshotId", "factsDigest", "startedAtMs", "deadlineMs"],
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1 },
+        "planHash": { "type": "string", "minLength": 1 },
+        "factsSnapshotId": { "type": "string", "minLength": 1 },
+        "factsDigest": { "type": "string", "minLength": 1 },
+        "startedAtMs": { "type": "number" },
+        "deadlineMs": { "type": "number" }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshotId", "digest", "clusterUid", "targetNamespaceUid", "restoreNamespaceUid", "target"],
+      "properties": {
+        "snapshotId": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "minLength": 1 },
+        "clusterUid": { "type": "string", "minLength": 1 },
+        "targetNamespaceUid": { "type": "string", "minLength": 1 },
+        "restoreNamespaceUid": { "type": "string", "minLength": 1 },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "name", "uid", "generation", "resourceVersion", "specDigest"],
+          "properties": {
+            "namespace": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "uid": { "type": "string", "minLength": 1 },
+            "generation": { "type": "integer", "minimum": 1 },
+            "resourceVersion": { "type": "string", "minLength": 1 },
+            "specDigest": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backup", "restoreCluster", "restore"],
+      "properties": {
+        "backup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "namespace", "name", "uid", "generation"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "uid": { "type": "string", "minLength": 1 },
+            "generation": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "restoreCluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "namespace", "name", "uid", "generation"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "uid": { "type": "string", "minLength": 1 },
+            "generation": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "restore": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "namespace", "name", "uid", "generation"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "uid": { "type": "string", "minLength": 1 },
+            "generation": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAtMs", "deadlineMs", "closedAtMs"],
+      "properties": {
+        "startedAtMs": { "type": "number" },
+        "deadlineMs": { "type": "number" },
+        "closedAtMs": { "type": "number" }
+      }
+    },
+    "pins": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "admission", "candidate", "digest"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "admission": { "type": "string", "minLength": 1 },
+          "candidate": { "type": "string" },
+          "digest": { "type": "string" }
+        }
+      }
+    },
+    "trustIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvalKeyId", "executionKeyId", "approvalPolicyVersion", "approvalSubject", "approvalRole"],
+      "properties": {
+        "approvalKeyId": { "type": "string", "minLength": 1 },
+        "executionKeyId": { "type": "string", "minLength": 1 },
+        "approvalPolicyVersion": { "type": "string", "minLength": 1 },
+        "approvalSubject": { "type": "string", "minLength": 1 },
+        "approvalRole": { "type": "string", "minLength": 1 }
+      }
+    },
+    "factsSnapshotId": { "type": "string", "minLength": 1 },
+    "factsDigest": { "type": "string", "minLength": 1 },
     "driftedDuring": { "type": "boolean" },
     "verdict": { "type": "string", "minLength": 1 },
     "pinsDigest": { "type": "string", "minLength": 1 },

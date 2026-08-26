@@ -3,6 +3,7 @@ import {
   SPEC_P1_AGENT_NO_PRIVILEGE,
   type Actor,
   type AgentCapabilities,
+  type Permission,
   type ResourceKind,
   type Verb,
 } from "./types.ts";
@@ -19,22 +20,25 @@ export function actorMay(actor: Actor, namespace: string, kind: ResourceKind, ve
   );
 }
 
-export function writerMustAllow(actor: Actor, sourceNs: string, restoreNs: string): boolean {
-  const required: readonly [string, ResourceKind, Verb][] = [
-    [sourceNs, "PerconaServerMySQL", "get"],
-    [sourceNs, "PerconaServerMySQL", "patch"],
-    [sourceNs, "PerconaServerMySQLBackup", "get"],
-    [sourceNs, "PerconaServerMySQLBackup", "create"],
-    [restoreNs, "PerconaServerMySQL", "get"],
-    [restoreNs, "PerconaServerMySQL", "create"],
-    [restoreNs, "PerconaServerMySQLRestore", "get"],
-    [restoreNs, "PerconaServerMySQLRestore", "create"],
-    [CONTROL_NAMESPACE, "ConfigMap", "get"],
-    [CONTROL_NAMESPACE, "ConfigMap", "create"],
-    [CONTROL_NAMESPACE, "ConfigMap", "list"],
-    [CONTROL_NAMESPACE, "Lease", "get"],
-    [CONTROL_NAMESPACE, "Lease", "create"],
-    [CONTROL_NAMESPACE, "Lease", "update"],
+export function writerAllowlist(sourceNs: string, restoreNs: string): Permission[] {
+  return [
+    { namespace: sourceNs, kind: "PerconaServerMySQL", verbs: ["get", "patch"] },
+    { namespace: sourceNs, kind: "PerconaServerMySQLBackup", verbs: ["get", "create"] },
+    { namespace: restoreNs, kind: "PerconaServerMySQL", verbs: ["get", "create"] },
+    { namespace: restoreNs, kind: "PerconaServerMySQLRestore", verbs: ["get", "create"] },
+    { namespace: CONTROL_NAMESPACE, kind: "ConfigMap", verbs: ["get", "create", "list"] },
+    { namespace: CONTROL_NAMESPACE, kind: "Lease", verbs: ["get", "create", "update"] },
   ];
-  return required.every(([namespace, kind, verb]) => actorMay(actor, namespace, kind, verb));
+}
+
+function permissionTuples(rules: readonly Permission[]): string[] {
+  return rules
+    .flatMap((rule) => rule.verbs.map((verb) => `${rule.namespace}/${rule.kind}:${verb}`))
+    .sort();
+}
+
+export function writerMustAllow(actor: Actor, sourceNs: string, restoreNs: string): boolean {
+  const required = permissionTuples(writerAllowlist(sourceNs, restoreNs));
+  const actual = permissionTuples(actor.rules);
+  return required.length === actual.length && required.every((item, index) => item === actual[index]);
 }

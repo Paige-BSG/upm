@@ -14,6 +14,7 @@ import {
   SPEC_P1_LEASE_NOT_SECURITY,
   WRITER_LEASE_NAME,
   type Actor,
+  type EvidenceManifest,
   type JournalEvent,
   type PerconaKind,
   type TargetRef,
@@ -60,6 +61,7 @@ export class FakeK8s {
   clusterUid = "cluster-uid-1";
   namespaceUids: Record<string, string> = { src: "ns-src", dst: "ns-dst", "upm-system": "ns-upm" };
   readonly objects = new Map<string, CrObject>();
+  readonly evidence = new Map<string, EvidenceManifest>();
   private versions = 1;
 
   private nextVersion(): string {
@@ -185,8 +187,20 @@ export class FakeK8s {
     if (!current || !current.rows) {
       throw new AdapterFailureError("MISSING");
     }
-    current.rows = [...current.rows, ...setB()];
+    const byId = new Map(current.rows.map((row) => [row.id, { ...row }]));
+    for (const row of setB()) {
+      byId.set(row.id, { ...row });
+    }
+    current.rows = [...byId.values()].sort((left, right) => left.id - right.id);
     current.resourceVersion = this.nextVersion();
+  }
+
+  putEvidence(digest: string, manifest: EvidenceManifest): void {
+    this.evidence.set(digest, manifest);
+  }
+
+  getEvidence(digest: string): EvidenceManifest | undefined {
+    return this.evidence.get(digest);
   }
 
   snapshotRows(namespace: string, name: string): OracleRow[] | undefined {

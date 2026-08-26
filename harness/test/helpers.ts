@@ -1,10 +1,10 @@
 import { FakeK8s } from "../src/fake-k8s.ts";
-import { planHash } from "../src/plan-hash.ts";
+import { computeFactsDigest, planHash } from "../src/plan-hash.ts";
 import { sha256Canonical } from "../src/rfc8785.ts";
+import { writerAllowlist } from "../src/rbac.ts";
 import { generateEd25519, signApproval } from "../src/signature.ts";
 import {
   CLUSTER_TYPE,
-  CONTROL_NAMESPACE,
   SCHEMA_VERSION,
   type Actor,
   type AgentCapabilities,
@@ -22,14 +22,7 @@ export const SAFE_AGENT: AgentCapabilities = {
 };
 
 export function writerRules(sourceNs: string, restoreNs: string): Permission[] {
-  return [
-    { namespace: sourceNs, kind: "PerconaServerMySQL", verbs: ["get", "patch"] },
-    { namespace: sourceNs, kind: "PerconaServerMySQLBackup", verbs: ["get", "create"] },
-    { namespace: restoreNs, kind: "PerconaServerMySQL", verbs: ["get", "create"] },
-    { namespace: restoreNs, kind: "PerconaServerMySQLRestore", verbs: ["get", "create"] },
-    { namespace: CONTROL_NAMESPACE, kind: "ConfigMap", verbs: ["get", "create", "list"] },
-    { namespace: CONTROL_NAMESPACE, kind: "Lease", verbs: ["get", "create", "update"] },
-  ];
+  return writerAllowlist(sourceNs, restoreNs);
 }
 
 export const ACTOR: Actor = {
@@ -79,7 +72,12 @@ export function makePlan(overrides: Partial<PlanDocument> = {}): PlanDocument {
     requiredApproverSubject: "human-approver",
     target: TARGET,
     factsSnapshotId: "facts-1",
-    factsDigest: sha256Canonical(TARGET),
+    factsDigest: computeFactsDigest({
+      clusterUid: "cluster-uid-1",
+      targetNamespaceUid: "ns-src",
+      restoreNamespaceUid: overrides.restoreNamespaceUid ?? "ns-dst",
+      target: overrides.target ?? TARGET,
+    }),
     actions: ["backup", "isolated-restore"],
     parameters: { clusterType: CLUSTER_TYPE },
     artifactDestination: "s3://test-bucket/op-1",

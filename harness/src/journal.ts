@@ -1,5 +1,6 @@
 import { journalName } from "./names.ts";
 import { sha256Canonical } from "./rfc8785.ts";
+import { admitJournalEvent } from "./schema.ts";
 import {
   CONTROL_NAMESPACE,
   SCHEMA_VERSION,
@@ -23,7 +24,9 @@ const NEXT: Record<JournalPhase, readonly JournalEventType[]> = {
   fence_wa: ["FenceSet"],
   fenced: ["BackupWriteAhead"],
   backup_wa: ["BackupCreated"],
-  backed_up: ["RestoreWriteAhead"],
+  backed_up: ["SetBWriteAhead"],
+  setb_wa: ["SetBApplied"],
+  setb_applied: ["RestoreWriteAhead"],
   restore_wa: ["RestoreClusterCreated"],
   restore_cluster: ["RestoreCreated"],
   restored: ["FenceReleaseWriteAhead"],
@@ -42,6 +45,7 @@ export function replayJournal(events: JournalEvent[]): JournalEvent[] {
   let previous: string | null = null;
   let lastSequence = 0;
   for (const event of events) {
+    admitJournalEvent(event);
     if (event.sequence !== lastSequence + 1) {
       throw new Error("BLOCKED");
     }
@@ -76,6 +80,10 @@ export function reduceJournal(events: JournalEvent[]): JournalPhase {
       phase = "backup_wa";
     } else if (event.type === "BackupCreated") {
       phase = "backed_up";
+    } else if (event.type === "SetBWriteAhead") {
+      phase = "setb_wa";
+    } else if (event.type === "SetBApplied") {
+      phase = "setb_applied";
     } else if (event.type === "RestoreWriteAhead") {
       phase = "restore_wa";
     } else if (event.type === "RestoreClusterCreated") {
@@ -95,16 +103,24 @@ export function reduceJournal(events: JournalEvent[]): JournalPhase {
   return phase;
 }
 
-export function closedVerdict(events: JournalEvent[]): { denial: DenialCode | null; evidenceJson: string | null } {
+export function closedVerdict(events: JournalEvent[]): {
+  denial: DenialCode | null;
+  evidenceDigest: string | null;
+  signature: string | null;
+} {
   const closed = events.find((event) => event.type === "EvidenceClosed" || event.type === "FenceReleaseBlocked");
   if (!closed) {
-    return { denial: null, evidenceJson: null };
+    return { denial: null, evidenceDigest: null, signature: null };
   }
   if (closed.type === "FenceReleaseBlocked") {
-    return { denial: "FENCE_RELEASE_BLOCKED", evidenceJson: null };
+    return { denial: "FENCE_RELEASE_BLOCKED", evidenceDigest: null, signature: null };
   }
   const denial = closed.payload.verdict === "OK" ? null : (closed.payload.verdict as DenialCode);
-  return { denial, evidenceJson: closed.payload.evidence ?? null };
+  return {
+    denial,
+    evidenceDigest: closed.payload.evidenceDigest ?? null,
+    signature: closed.payload.signature ?? null,
+  };
 }
 
 export function appendEvent(

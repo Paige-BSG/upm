@@ -17,7 +17,7 @@ import {
   SPEC_P1_SCOPE_NONDESTRUCTIVE,
   SPEC_P1_TARGET_FENCE,
 } from "../src/types.ts";
-import { ACTOR, liveCluster, makeKeys, makePlan, makeRequest, SAFE_AGENT } from "./helpers.ts";
+import { ACTOR, liveCluster, makeKeys, makePlan, makeRequest, SAFE_AGENT, writerRules } from "./helpers.ts";
 
 function run(
   nowMs = 1_000_000,
@@ -119,7 +119,8 @@ test(`${SPEC_P1_APPROVAL_ED25519} expired approval is unapproved before consume`
 test(`${SPEC_P1_RESUME_OR_BLOCKED} consumed approval resumes after expiry`, () => {
   const cluster = liveCluster();
   const keys = makeKeys();
-  const first = run(1_000_000, { cluster, keys, crashAfter: "ApprovalConsumed" });
+  const built = makeRequest(1_000_000, keys, makePlan({ timeoutMs: 20 * 60 * 1000 }));
+  const first = run(1_000_000, { cluster, keys, request: built.request, crashAfter: "ApprovalConsumed" });
   assert.equal(first.result.ok, false);
   const second = executeBackupProof({
     request: first.request,
@@ -258,10 +259,15 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} crash at each write-ahead and create boundary
     "BackupWriteAhead",
     "BackupCreated",
     "FenceWriteAhead",
+    "SetBWriteAhead",
+    "SetBApplied",
     "RestoreWriteAhead",
     "RestoreClusterCreated",
     "RestoreCreated",
     "FenceReleaseWriteAhead",
+    "afterBackupApi",
+    "afterRestoreApi",
+    "afterSetBApi",
   ] as const) {
     const cluster = liveCluster();
     const keys = makeKeys();
@@ -283,5 +289,86 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} missing backup after create is BLOCKED`, () =
   }
   const again = run(1_000_000, { cluster, keys });
   assert.equal(again.result.denial, "BLOCKED");
+});
+
+test(`${SPEC_P1_RESUME_OR_BLOCKED} closed replay of a different signed plan is BLOCKED`, () => {
+  const cluster = liveCluster();
+  const keys = makeKeys();
+  const first = run(1_000_000, { cluster, keys });
+  assert.equal(first.result.ok, true);
+  const built = makeRequest(1_000_000, keys, makePlan({ artifactDestination: "s3://test-bucket/op-1-other" }));
+  const again = executeBackupProof({
+    request: built.request,
+    agent: SAFE_AGENT,
+    actor: ACTOR,
+    cluster,
+    keys: built.keys.trusted,
+    nowMs: 1_000_000,
+  });
+  assert.equal(again.ok, false);
+  assert.equal(again.replayed, true);
+  assert.equal(again.denial, "BLOCKED");
+  assert.notEqual(again.record.planHash, first.result.record.evidence?.planHash);
+});
+
+test(`${SPEC_P1_ORACLE_AB} Set B crash at restore write-ahead upserts instead of appending`, () => {
+  const cluster = liveCluster();
+  const keys = makeKeys();
+  run(1_000_000, { cluster, keys, crashAfter: "RestoreWriteAhead" });
+  const mid = cluster.snapshotRows("src", "source-db") ?? [];
+  assert.equal(mid.length, 1100);
+  assert.equal(new Set(mid.map((row) => row.id)).size, 1100);
+  const second = run(1_000_000, { cluster, keys });
+  assert.equal(second.result.ok, true);
+  const end = cluster.snapshotRows("src", "source-db") ?? [];
+  assert.equal(end.length, 1100);
+  assert.equal(new Set(end.map((row) => row.id)).size, 1100);
+});
+
+test("persisted intent deadline cannot be reset by omitting startedAt", () => {
+  const cluster = liveCluster();
+  const keys = makeKeys();
+  const first = run(1_000_000, { cluster, keys, crashAfter: "ApprovalConsumed" });
+  const second = executeBackupProof({
+    request: first.request,
+    agent: SAFE_AGENT,
+    actor: ACTOR,
+    cluster,
+    keys: first.keys.trusted,
+    nowMs: 1_000_000 + 16 * 60 * 1000,
+  });
+  assert.equal(second.denial, "TIMEOUT");
+});
+
+test("unsupported action fake facts destination risk and policy are BLOCKED", () => {
+  const cases = [
+    makePlan({ actions: ["delete-source"] }),
+    makePlan({ factsDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }),
+    makePlan({ artifactDestination: "file://tmp/backup" }),
+    makePlan({ risk: "destructive" }),
+    makePlan({ approvalPolicyVersion: "untrusted" }),
+  ];
+  for (const plan of cases) {
+    const built = makeRequest(1_000_000, makeKeys(), plan);
+    const result = executeBackupProof({
+      request: built.request,
+      agent: SAFE_AGENT,
+      actor: ACTOR,
+      cluster: liveCluster(),
+      keys: built.keys.trusted,
+      nowMs: 1_000_000,
+    });
+    assert.equal(result.denial, "BLOCKED");
+    assert.equal(result.ok, false);
+  }
+});
+
+test("overprivilege extra ConfigMap create is RBAC", () => {
+  const extra = {
+    ...ACTOR,
+    rules: [...writerRules("src", "dst"), { namespace: "src", kind: "ConfigMap" as const, verbs: ["create" as const] }],
+  };
+  const { result } = run(1_000_000, { actor: extra });
+  assert.equal(result.denial, "RBAC");
 });
 
