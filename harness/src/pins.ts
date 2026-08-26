@@ -51,7 +51,31 @@ export const STARTUP_PINS: readonly StartupPin[] = [
     id: "percona-xtrabackup-image-arm64",
     admission: PIN_ADMITTED,
     candidate: "percona/percona-xtrabackup:8.4.0-6.1",
-    digest: "sha256:d135aadaae9e2f947cb2002f982f7b4c6e177b1c7e3d543ef7795aea999feedd",
+    digest: "sha256:fcf2b3fc20cfbfa6d47ec60cecd881f915beacdae838f994dda984baea825293",
+  },
+  {
+    id: "percona-haproxy-image-arm64",
+    admission: PIN_ADMITTED,
+    candidate: "percona/haproxy:2.8.18-1",
+    digest: "sha256:563d84d64e1668cb4f6b2202fbe15a18e0733b48fe963383bb877c9e3a8a0abd",
+  },
+  {
+    id: "percona-mysql-router-image-arm64",
+    admission: PIN_ADMITTED,
+    candidate: "percona/percona-mysql-router:8.4.10-10.1",
+    digest: "sha256:e3be4405858a4198ecb1265365763de33dc6991bdb811bbc10803a92d06606a0",
+  },
+  {
+    id: "percona-orchestrator-image-arm64",
+    admission: PIN_ADMITTED,
+    candidate: "percona/percona-orchestrator:3.2.6-22",
+    digest: "sha256:7ed29d0cde9396687fa42e1640ac2554125fd3a1e2a9f8d70667bbd00b386703",
+  },
+  {
+    id: "kubernetes-client-node-minikube-compat",
+    admission: PIN_PENDING,
+    candidate: "Minikube 1.38.1 / k8s 1.35 pairing",
+    digest: null,
   },
   {
     id: "minio-image",

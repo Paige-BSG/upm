@@ -5,14 +5,35 @@ import {
   SCHEMA_VERSION,
   SPEC_P1_JOURNAL_CHAIN,
   SPEC_P1_RESUME_OR_BLOCKED,
+  type DenialCode,
   type JournalEvent,
   type JournalEventType,
+  type JournalPhase,
 } from "./types.ts";
 import { FakeK8s, type CrObject } from "./fake-k8s.ts";
 import type { Actor } from "./types.ts";
 
 void SPEC_P1_JOURNAL_CHAIN;
 void SPEC_P1_RESUME_OR_BLOCKED;
+
+const NEXT: Record<JournalPhase, readonly JournalEventType[]> = {
+  empty: ["IntentAccepted"],
+  intent: ["ApprovalConsumed"],
+  approved: ["FenceSet"],
+  fenced: ["BackupWriteAhead"],
+  backup_wa: ["BackupCreated"],
+  backed_up: ["RestoreWriteAhead"],
+  restore_wa: ["RestoreCreated"],
+  restored: ["EvidenceClosed", "FenceReleaseBlocked"],
+  closed: [],
+  fence_blocked: [],
+  blocked: [],
+};
+
+export function eventDigest(event: Omit<JournalEvent, "eventDigest"> & { eventDigest?: string }): string {
+  const { eventDigest: _ignored, ...rest } = event;
+  return sha256Canonical(rest);
+}
 
 export function replayJournal(events: JournalEvent[]): JournalEvent[] {
   let previous: string | null = null;
@@ -33,9 +54,48 @@ export function replayJournal(events: JournalEvent[]): JournalEvent[] {
   return events;
 }
 
-export function eventDigest(event: Omit<JournalEvent, "eventDigest"> & { eventDigest?: string }): string {
-  const { eventDigest: _ignored, ...rest } = event;
-  return sha256Canonical(rest);
+export function reduceJournal(events: JournalEvent[]): JournalPhase {
+  replayJournal(events);
+  let phase: JournalPhase = "empty";
+  for (const event of events) {
+    if (!NEXT[phase].includes(event.type)) {
+      throw new Error("BLOCKED");
+    }
+    if (event.type === "IntentAccepted") {
+      phase = "intent";
+    } else if (event.type === "ApprovalConsumed") {
+      phase = "approved";
+    } else if (event.type === "FenceSet") {
+      phase = "fenced";
+    } else if (event.type === "BackupWriteAhead") {
+      phase = "backup_wa";
+    } else if (event.type === "BackupCreated") {
+      phase = "backed_up";
+    } else if (event.type === "RestoreWriteAhead") {
+      phase = "restore_wa";
+    } else if (event.type === "RestoreCreated") {
+      phase = "restored";
+    } else if (event.type === "EvidenceClosed") {
+      phase = "closed";
+    } else if (event.type === "FenceReleaseBlocked") {
+      phase = "fence_blocked";
+    } else {
+      throw new Error("BLOCKED");
+    }
+  }
+  return phase;
+}
+
+export function closedVerdict(events: JournalEvent[]): { denial: DenialCode | null; evidenceJson: string | null } {
+  const closed = events.find((event) => event.type === "EvidenceClosed" || event.type === "FenceReleaseBlocked");
+  if (!closed) {
+    return { denial: null, evidenceJson: null };
+  }
+  if (closed.type === "FenceReleaseBlocked") {
+    return { denial: "FENCE_RELEASE_BLOCKED", evidenceJson: null };
+  }
+  const denial = closed.payload.verdict === "OK" ? null : (closed.payload.verdict as DenialCode);
+  return { denial, evidenceJson: closed.payload.evidence ?? null };
 }
 
 export function appendEvent(
@@ -48,8 +108,12 @@ export function appendEvent(
   if (!cluster.leaseLive(actor.actorId)) {
     throw new Error("LEASE_CONTENDED");
   }
+  cluster.renewLease(actor.actorId);
   const existing = cluster.listJournal().filter((event) => event.operationId === operationId);
-  replayJournal(existing);
+  const phase = reduceJournal(existing);
+  if (!NEXT[phase].includes(type)) {
+    throw new Error("BLOCKED");
+  }
   const previousEventDigest = existing.length === 0 ? null : existing[existing.length - 1]!.eventDigest;
   const sequence = existing.length + 1;
   const unsigned: Omit<JournalEvent, "eventDigest"> = {

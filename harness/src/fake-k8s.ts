@@ -37,6 +37,10 @@ export type CrObject = {
   specDigest: string;
   spec: Record<string, string>;
   rows?: OracleRow[];
+  observedSchema?: Record<string, string>;
+  backupStatus?: string;
+  artifactId?: string;
+  artifactDigest?: string;
   event?: JournalEvent;
   leaseHolder?: string;
   leaseUntil?: number;
@@ -50,6 +54,9 @@ export class FakeK8s {
   mode: FakeMode = "ok";
   nowMs = 0;
   forceDriftAfterBackup = false;
+  failFenceRelease = false;
+  clusterUid = "cluster-uid-1";
+  namespaceUids: Record<string, string> = { src: "ns-src", dst: "ns-dst", "upm-system": "ns-upm" };
   readonly objects = new Map<string, CrObject>();
   private versions = 1;
 
@@ -70,13 +77,17 @@ export class FakeK8s {
       specDigest: target.specDigest,
       spec: { clusterType: "group-replication" },
       rows: rows.map((row) => ({ ...row })),
+      observedSchema: {
+        table: "backup_proof_items",
+        columns: "id BIGINT PRIMARY KEY,payload VARCHAR(64) NOT NULL",
+      },
     };
     this.objects.set(key(target.namespace, object.kind, object.name), object);
     return object;
   }
 
   get(actor: Actor, kind: CrObject["kind"], namespace: string, name: string): CrObject | undefined {
-    if (kind !== "ConfigMap" && kind !== "Lease" && !actorMay(actor, namespace, kind)) {
+    if (!actorMay(actor, namespace, kind)) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     return this.objects.get(key(namespace, kind, name));
@@ -84,7 +95,7 @@ export class FakeK8s {
 
   create(actor: Actor, object: CrObject): CrObject {
     this.guard();
-    if (object.kind !== "ConfigMap" && object.kind !== "Lease" && !actorMay(actor, object.namespace, object.kind)) {
+    if (!actorMay(actor, object.namespace, object.kind)) {
       throw new AdapterUnauthorizedError("UNAUTHORIZED");
     }
     const existing = this.objects.get(key(object.namespace, object.kind, object.name));
@@ -148,6 +159,12 @@ export class FakeK8s {
 
   releaseFence(actor: Actor, target: TargetRef, fence: string): CrObject {
     this.guard();
+    if (!actorMay(actor, target.namespace, "PerconaServerMySQL")) {
+      throw new AdapterUnauthorizedError("UNAUTHORIZED");
+    }
+    if (this.failFenceRelease) {
+      throw new AdapterConflictError("FENCE_RELEASE_BLOCKED");
+    }
     const current = this.objects.get(key(target.namespace, "PerconaServerMySQL", target.name));
     if (!current) {
       throw new AdapterFailureError("MISSING");
@@ -179,9 +196,20 @@ export class FakeK8s {
     current.resourceVersion = this.nextVersion();
   }
 
-  snapshotRows(namespace: string, name: string): OracleRow[] {
+  snapshotRows(namespace: string, name: string): OracleRow[] | undefined {
     const current = this.objects.get(key(namespace, "PerconaServerMySQL", name));
-    return current?.rows?.map((row) => ({ ...row })) ?? [];
+    if (!current?.rows) {
+      return undefined;
+    }
+    return current.rows.map((row) => ({ ...row }));
+  }
+
+  renewLease(holder: string): void {
+    const existing = this.objects.get(key(CONTROL_NAMESPACE, "Lease", WRITER_LEASE_NAME));
+    if (!existing || existing.leaseHolder !== holder) {
+      throw new Error("LEASE_CONTENDED");
+    }
+    existing.leaseUntil = this.nowMs + LEASE_DURATION_MS;
   }
 
   acquireLease(holder: string): boolean {

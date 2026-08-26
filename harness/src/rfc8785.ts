@@ -1,33 +1,56 @@
 import { createHash } from "node:crypto";
 
-const ESCAPE: Record<string, string> = {
-  "\u0008": "\\b",
-  "\t": "\\t",
-  "\n": "\\n",
-  "\u000c": "\\f",
-  "\r": "\\r",
-  '"': '\\"',
-  "\\": "\\\\",
+const ESCAPE: Record<number, string> = {
+  0x08: "\\b",
+  0x09: "\\t",
+  0x0a: "\\n",
+  0x0c: "\\f",
+  0x0d: "\\r",
+  0x22: '\\"',
+  0x5c: "\\\\",
 };
 
 function encodeString(value: string): string {
   let out = '"';
-  for (const char of value) {
-    const code = char.codePointAt(0);
-    if (code === undefined) {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    const mapped = ESCAPE[unit];
+    if (mapped !== undefined) {
+      out += mapped;
       continue;
     }
-    if (ESCAPE[char] !== undefined) {
-      out += ESCAPE[char];
+    if (unit < 0x20) {
+      out += `\\u${unit.toString(16).padStart(4, "0")}`;
       continue;
     }
-    if (code < 0x20) {
-      out += `\\u${code.toString(16).padStart(4, "0")}`;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value[index];
+        out += value[index + 1];
+        index += 1;
+        continue;
+      }
+      out += `\\u${unit.toString(16).padStart(4, "0")}`;
       continue;
     }
-    out += char;
+    if (unit >= 0xdc00 && unit <= 0xdfff) {
+      out += `\\u${unit.toString(16).padStart(4, "0")}`;
+      continue;
+    }
+    out += value[index];
   }
   return `${out}"`;
+}
+
+function encodeNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    throw new Error("RFC8785_NUMBER");
+  }
+  if (Object.is(value, -0)) {
+    return "0";
+  }
+  return String(value);
 }
 
 export function canonicalize(value: unknown): string {
@@ -38,10 +61,7 @@ export function canonicalize(value: unknown): string {
     return value ? "true" : "false";
   }
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || !Number.isInteger(value)) {
-      throw new Error("RFC8785_NUMBER");
-    }
-    return String(value);
+    return encodeNumber(value);
   }
   if (typeof value === "string") {
     return encodeString(value);

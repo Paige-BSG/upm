@@ -38,7 +38,13 @@ export function schemaDigest(): string {
   });
 }
 
-export function evaluateOracle(rows: OracleRow[]): {
+export function evaluateOracle(
+  rows: OracleRow[],
+  observedSchema: Record<string, string> = {
+    table: "backup_proof_items",
+    columns: "id BIGINT PRIMARY KEY,payload VARCHAR(64) NOT NULL",
+  },
+): {
   schemaDigest: string;
   count: number;
   primaryKeyMin: number;
@@ -58,7 +64,7 @@ export function evaluateOracle(rows: OracleRow[]): {
     orderedRowHash(rows) === orderedRowHash(expected) &&
     setBAbsent;
   return {
-    schemaDigest: schemaDigest(),
+    schemaDigest: sha256Canonical(observedSchema),
     count: rows.length,
     primaryKeyMin: ids[0] ?? 0,
     primaryKeyMax: ids[ids.length - 1] ?? 0,

@@ -1,17 +1,19 @@
-import { FakeK8s, readTarget } from "./fake-k8s.ts";
-import { appendEvent, replayJournal } from "./journal.ts";
+import { FakeK8s, readTarget, type CrObject } from "./fake-k8s.ts";
+import { appendEvent, closedVerdict, reduceJournal } from "./journal.ts";
 import { backupName, restoreClusterName, restoreName } from "./names.ts";
-import { evaluateOracle, setA } from "./oracle.ts";
+import { evaluateOracle } from "./oracle.ts";
 import { planHash } from "./plan-hash.ts";
 import { STARTUP_PINS } from "./pins.ts";
 import { agentHasPrivilege, actorMay } from "./rbac.ts";
 import { sha256Canonical } from "./rfc8785.ts";
-import { approvalFresh, approvalPayload, signCanonical, verifyCanonical } from "./signature.ts";
+import { admitRequest } from "./schema.ts";
+import { approvalFresh, signCanonical, verifyCanonical } from "./signature.ts";
 import {
   AdapterConflictError,
   AdapterFailureError,
   AdapterTimeoutError,
   AdapterUnauthorizedError,
+  CONTROL_NAMESPACE,
   FENCE_ANNOTATION,
   PERCONA_KINDS,
   SPEC_P1_DRIFT_DURING,
@@ -21,9 +23,9 @@ import {
   type Actor,
   type AgentCapabilities,
   type ApprovalEnvelope,
-  type BackupProofRequest,
   type DenialCode,
   type EvidenceManifest,
+  type JournalEventType,
   type OperationRecord,
   type TargetRef,
 } from "./types.ts";
@@ -33,18 +35,28 @@ void SPEC_P1_TARGET_FENCE;
 void SPEC_P1_DRIFT_DURING;
 void SPEC_P1_RESUME_OR_BLOCKED;
 
+export type TrustedApproval = {
+  publicKeyPem: string;
+  subject: string;
+  role: string;
+};
+
 export type TrustedKeys = {
-  approval: Record<string, string>;
+  approval: Record<string, TrustedApproval>;
   execution: { keyId: string; publicKeyPem: string; privateKeyPem: string };
 };
 
+export type CrashAfter = JournalEventType | "none";
+
 export type ExecuteInput = {
-  request: BackupProofRequest;
+  request: unknown;
   agent: AgentCapabilities;
   actor: Actor;
   cluster: FakeK8s;
   keys: TrustedKeys;
   nowMs: number;
+  startedAtMs?: number;
+  crashAfter?: CrashAfter;
 };
 
 export type ExecuteResult = {
@@ -54,15 +66,19 @@ export type ExecuteResult = {
   record: OperationRecord;
 };
 
-type InternalResult = ExecuteResult;
-
-function result(record: OperationRecord, replayed: boolean): InternalResult {
+function result(record: OperationRecord, replayed: boolean): ExecuteResult {
   return { ok: record.denial === null && record.evidence !== null, replayed, denial: record.denial, record };
 }
 
-function deny(operationId: string, planHashValue: string, denial: DenialCode, replayed = false): InternalResult {
+function deny(operationId: string, planHashValue: string, denial: DenialCode, replayed = false): ExecuteResult {
   return result(
-    { operationId, planHash: planHashValue, denial, evidence: null, driftedDuring: denial === "TARGET_DRIFTED_DURING_OPERATION" },
+    {
+      operationId,
+      planHash: planHashValue,
+      denial,
+      evidence: null,
+      driftedDuring: denial === "TARGET_DRIFTED_DURING_OPERATION",
+    },
     replayed,
   );
 }
@@ -78,16 +94,36 @@ function sameTarget(left: TargetRef, right: TargetRef): boolean {
   );
 }
 
-function verifyApproval(request: BackupProofRequest, keys: TrustedKeys, nowMs: number): boolean {
+function exactObject(left: CrObject, right: CrObject): boolean {
+  return (
+    left.kind === right.kind &&
+    left.namespace === right.namespace &&
+    left.name === right.name &&
+    left.annotations.operationId === right.annotations.operationId &&
+    left.annotations.planHash === right.annotations.planHash &&
+    sha256Canonical(left.spec) === sha256Canonical(right.spec) &&
+    sha256Canonical(left.rows ?? null) === sha256Canonical(right.rows ?? null) &&
+    left.artifactDigest === right.artifactDigest &&
+    left.backupStatus === right.backupStatus
+  );
+}
+
+function verifyApproval(request: ReturnType<typeof admitRequest>, keys: TrustedKeys, nowMs: number): boolean {
   const envelope = request.approval;
-  const publicKey = keys.approval[envelope.keyId];
-  if (!publicKey) {
+  const trusted = keys.approval[envelope.keyId];
+  if (!trusted) {
     return false;
   }
-  if (!approvalFresh(envelope, nowMs)) {
+  if (trusted.subject !== envelope.approverSubject || trusted.subject !== request.plan.requiredApproverSubject) {
+    return false;
+  }
+  if (trusted.role !== request.plan.requiredApproverRole) {
     return false;
   }
   if (envelope.planHash !== request.planHash) {
+    return false;
+  }
+  if (!approvalFresh(envelope, nowMs)) {
     return false;
   }
   const unsigned: Omit<ApprovalEnvelope, "signature"> = {
@@ -99,145 +135,202 @@ function verifyApproval(request: BackupProofRequest, keys: TrustedKeys, nowMs: n
     expiresAt: envelope.expiresAt,
     nonce: envelope.nonce,
   };
-  void approvalPayload(unsigned);
-  return verifyCanonical(publicKey, unsigned, envelope.signature);
+  return verifyCanonical(trusted.publicKeyPem, unsigned, envelope.signature);
 }
 
 export function executeBackupProof(input: ExecuteInput): ExecuteResult {
-  const { request, agent, actor, cluster, keys, nowMs } = input;
+  let request;
+  try {
+    request = admitRequest(input.request);
+  } catch (error) {
+    if (error instanceof Error && error.message === "SCHEMA") {
+      return deny("unknown", "unknown", "BLOCKED");
+    }
+    throw error;
+  }
+  const { agent, actor, cluster, keys, nowMs } = input;
+  const startedAtMs = input.startedAtMs ?? nowMs;
+  const crashAfter = input.crashAfter ?? "none";
   cluster.nowMs = nowMs;
+  if (nowMs - startedAtMs > request.plan.timeoutMs) {
+    return deny(request.operationId, request.planHash, "TIMEOUT");
+  }
   if (agentHasPrivilege(agent)) {
     return deny(request.operationId, request.planHash, "AGENT_PRIVILEGE");
   }
-  if (request.plan.target.namespace === request.restoreNamespace) {
+  if (request.operationId !== request.plan.operationId || actor.actorId !== request.plan.actor) {
+    return deny(request.operationId, request.planHash, "DRIFT");
+  }
+  if (request.plan.target.namespace === request.plan.restoreNamespace) {
     return deny(request.operationId, request.planHash, "SAME_NAMESPACE");
   }
   if (planHash(request.plan) !== request.planHash) {
     return deny(request.operationId, request.planHash, "PLAN_HASH_MISMATCH");
   }
+  if (cluster.clusterUid !== request.plan.clusterUid) {
+    return deny(request.operationId, request.planHash, "DRIFT");
+  }
+  if (
+    cluster.namespaceUids[request.plan.targetNamespace] !== request.plan.targetNamespaceUid ||
+    cluster.namespaceUids[request.plan.restoreNamespace] !== request.plan.restoreNamespaceUid
+  ) {
+    return deny(request.operationId, request.planHash, "DRIFT");
+  }
   for (const kind of PERCONA_KINDS) {
-    if (!actorMay(actor, request.plan.target.namespace, kind) || !actorMay(actor, request.restoreNamespace, kind)) {
+    if (
+      !actorMay(actor, request.plan.target.namespace, kind) ||
+      !actorMay(actor, request.plan.restoreNamespace, kind)
+    ) {
       return deny(request.operationId, request.planHash, "RBAC");
     }
+  }
+  if (!actorMay(actor, CONTROL_NAMESPACE, "ConfigMap") || !actorMay(actor, CONTROL_NAMESPACE, "Lease")) {
+    return deny(request.operationId, request.planHash, "RBAC");
   }
   if (!cluster.acquireLease(actor.actorId)) {
     return deny(request.operationId, request.planHash, "LEASE_CONTENDED");
   }
   let events;
   try {
-    events = replayJournal(cluster.listJournal().filter((event) => event.operationId === request.operationId));
-  } catch {
-    return deny(request.operationId, request.planHash, "BLOCKED", true);
-  }
-  const closed = events.find((event) => event.type === "EvidenceClosed");
-  if (closed) {
-    if (closed.payload.planHash !== request.planHash) {
+    events = cluster.listJournal().filter((event) => event.operationId === request.operationId);
+    const phase = reduceJournal(events);
+    if (phase === "closed" || phase === "fence_blocked") {
+      const closed = closedVerdict(events);
+      if (closed.evidenceJson) {
+        return result(
+          {
+            operationId: request.operationId,
+            planHash: request.planHash,
+            denial: closed.denial,
+            driftedDuring: closed.denial === "TARGET_DRIFTED_DURING_OPERATION",
+            evidence: JSON.parse(closed.evidenceJson) as EvidenceManifest,
+          },
+          true,
+        );
+      }
+      return deny(request.operationId, request.planHash, closed.denial ?? "BLOCKED", true);
+    }
+    if (events.length > 0 && events[0]!.payload.planHash !== request.planHash) {
       return deny(request.operationId, request.planHash, "BLOCKED", true);
     }
-    return result(
-      {
-        operationId: request.operationId,
-        planHash: request.planHash,
-        denial: null,
-        driftedDuring: closed.payload.driftedDuring === "true",
-        evidence: JSON.parse(closed.payload.evidence ?? "null") as EvidenceManifest,
-      },
-      true,
-    );
-  }
-  if (events.length > 0) {
-    const first = events[0]!;
-    if (first.payload.planHash !== request.planHash) {
-      return deny(request.operationId, request.planHash, "BLOCKED", true);
-    }
-  }
-  if (!verifyApproval(request, keys, nowMs)) {
-    return deny(request.operationId, request.planHash, "UNAPPROVED");
-  }
-  if (events.some((event) => event.type === "ApprovalConsumed") === false) {
-    try {
-      appendEvent(cluster, actor, request.operationId, events.length === 0 ? "IntentAccepted" : "ApprovalConsumed", {
+    const approved = phase !== "empty" && phase !== "intent";
+    if (!approved) {
+      if (!verifyApproval(request, keys, nowMs)) {
+        return deny(request.operationId, request.planHash, "UNAPPROVED");
+      }
+      if (phase === "empty") {
+        appendEvent(cluster, actor, request.operationId, "IntentAccepted", { planHash: request.planHash });
+        if (crashAfter === "IntentAccepted") {
+          return deny(request.operationId, request.planHash, "BLOCKED");
+        }
+      }
+      appendEvent(cluster, actor, request.operationId, "ApprovalConsumed", {
         planHash: request.planHash,
         approvalId: request.approval.approvalId,
       });
-      if (events.length === 0) {
-        appendEvent(cluster, actor, request.operationId, "ApprovalConsumed", {
-          planHash: request.planHash,
-          approvalId: request.approval.approvalId,
-        });
+      if (crashAfter === "ApprovalConsumed") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
       }
-    } catch (error) {
-      return mapAdapter(request, error);
     }
-  }
-  const live = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
-  if (!live) {
-    return deny(request.operationId, request.planHash, "DRIFT");
-  }
-  const liveTarget = readTarget(live);
-  if (!sameTarget(liveTarget, request.plan.target) || live.annotations[FENCE_ANNOTATION] !== undefined) {
-    return deny(request.operationId, request.planHash, "DRIFT");
-  }
-  const fence = `${request.operationId}:${request.planHash}`;
-  try {
-    cluster.patchFence(actor, request.plan.target, fence);
-    appendEvent(cluster, actor, request.operationId, "FenceSet", { fence });
-  } catch (error) {
-    return mapAdapter(request, error);
-  }
-  const backup = backupName(request.operationId);
-  try {
-    appendEvent(cluster, actor, request.operationId, "BackupWriteAhead", { name: backup });
+    const fence = `${request.operationId}:${request.planHash}`;
+    const live = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
+    if (!live) {
+      return deny(request.operationId, request.planHash, "DRIFT");
+    }
+    const currentPhase = reduceJournal(
+      cluster.listJournal().filter((event) => event.operationId === request.operationId),
+    );
+    if (currentPhase === "approved") {
+      const liveTarget = readTarget(live);
+      if (!sameTarget(liveTarget, request.plan.target) || live.annotations[FENCE_ANNOTATION] !== undefined) {
+        return deny(request.operationId, request.planHash, "DRIFT");
+      }
+      cluster.patchFence(actor, request.plan.target, fence);
+      appendEvent(cluster, actor, request.operationId, "FenceSet", { fence });
+      if (crashAfter === "FenceSet") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+    } else if (live.annotations[FENCE_ANNOTATION] !== fence) {
+      return deny(request.operationId, request.planHash, "DRIFT");
+    }
+    const backup = backupName(request.operationId);
     const snapshot = cluster.snapshotRows(request.plan.target.namespace, request.plan.target.name);
-    try {
-      cluster.create(actor, {
-        kind: "PerconaServerMySQLBackup",
-        namespace: request.plan.target.namespace,
-        name: backup,
-        uid: `${request.operationId}-backup`,
-        generation: 1,
-        resourceVersion: "1",
-        annotations: { operationId: request.operationId, planHash: request.planHash },
-        specDigest: request.planHash,
-        spec: { mysqlName: request.plan.target.name },
-        rows: snapshot,
-      });
-    } catch (error) {
-      if (error instanceof AdapterConflictError) {
+    const observedSchema = live.observedSchema;
+    if (!snapshot || !observedSchema) {
+      return deny(request.operationId, request.planHash, "BLOCKED");
+    }
+    const backupObject: CrObject = {
+      kind: "PerconaServerMySQLBackup",
+      namespace: request.plan.target.namespace,
+      name: backup,
+      uid: `${request.operationId}-backup`,
+      generation: 1,
+      resourceVersion: "1",
+      annotations: { operationId: request.operationId, planHash: request.planHash },
+      specDigest: request.planHash,
+      spec: { mysqlName: request.plan.target.name },
+      rows: snapshot,
+      observedSchema,
+      backupStatus: "Succeeded",
+      artifactId: `${backup}-artifact`,
+      artifactDigest: sha256Canonical(snapshot),
+    };
+    let phaseNow = reduceJournal(cluster.listJournal().filter((event) => event.operationId === request.operationId));
+    if (phaseNow === "fenced") {
+      appendEvent(cluster, actor, request.operationId, "BackupWriteAhead", { name: backup });
+      if (crashAfter === "BackupWriteAhead") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      phaseNow = "backup_wa";
+    }
+    if (phaseNow === "backup_wa") {
+      try {
+        cluster.create(actor, backupObject);
+      } catch (error) {
+        if (!(error instanceof AdapterConflictError)) {
+          return mapAdapter(request, error);
+        }
         const existing = cluster.get(actor, "PerconaServerMySQLBackup", request.plan.target.namespace, backup);
-        if (!existing || existing.annotations.planHash !== request.planHash) {
+        if (!existing || !exactObject(existing, backupObject)) {
           return deny(request.operationId, request.planHash, "BLOCKED");
         }
-      } else {
-        return mapAdapter(request, error);
+      }
+      const created = cluster.get(actor, "PerconaServerMySQLBackup", request.plan.target.namespace, backup);
+      if (!created || created.backupStatus !== "Succeeded" || !created.artifactId || !created.artifactDigest) {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      appendEvent(cluster, actor, request.operationId, "BackupCreated", {
+        name: backup,
+        artifactId: created.artifactId,
+        artifactDigest: created.artifactDigest,
+      });
+      if (crashAfter === "BackupCreated") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
       }
     }
-    appendEvent(cluster, actor, request.operationId, "BackupCreated", { name: backup });
-  } catch (error) {
-    return mapAdapter(request, error);
-  }
-  cluster.writeSetB(request.plan.target);
-  if (cluster.forceDriftAfterBackup) {
-    cluster.mutateTarget(request.plan.target);
-  }
-  const post = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
-  if (!post) {
-    return deny(request.operationId, request.planHash, "DRIFT");
-  }
-  const postTarget = readTarget(post);
-  const driftedDuring =
-    postTarget.uid !== request.plan.target.uid ||
-    postTarget.generation !== request.plan.target.generation ||
-    postTarget.specDigest !== request.plan.target.specDigest;
-  const restore = restoreName(request.operationId);
-  const restoredCluster = restoreClusterName(request.operationId);
-  const backupObj = cluster.get(actor, "PerconaServerMySQLBackup", request.plan.target.namespace, backup);
-  const restoreRows = backupObj?.rows ?? setA();
-  try {
-    appendEvent(cluster, actor, request.operationId, "RestoreWriteAhead", { name: restore });
-    cluster.create(actor, {
+    cluster.writeSetB(request.plan.target);
+    if (cluster.forceDriftAfterBackup) {
+      cluster.mutateTarget(request.plan.target);
+    }
+    const post = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
+    if (!post) {
+      return deny(request.operationId, request.planHash, "DRIFT");
+    }
+    const postTarget = readTarget(post);
+    const driftedDuring =
+      postTarget.uid !== request.plan.target.uid ||
+      postTarget.generation !== request.plan.target.generation ||
+      postTarget.specDigest !== request.plan.target.specDigest;
+    const restore = restoreName(request.operationId);
+    const restoredCluster = restoreClusterName(request.operationId);
+    const backupObj = cluster.get(actor, "PerconaServerMySQLBackup", request.plan.target.namespace, backup);
+    if (!backupObj?.rows || backupObj.backupStatus !== "Succeeded" || !backupObj.artifactDigest || !backupObj.observedSchema) {
+      return deny(request.operationId, request.planHash, "BLOCKED");
+    }
+    const restoreRows = backupObj.rows;
+    const clusterObject: CrObject = {
       kind: "PerconaServerMySQL",
-      namespace: request.restoreNamespace,
+      namespace: request.plan.restoreNamespace,
       name: restoredCluster,
       uid: `${request.operationId}-cluster`,
       generation: 1,
@@ -246,10 +339,11 @@ export function executeBackupProof(input: ExecuteInput): ExecuteResult {
       specDigest: request.planHash,
       spec: { clusterType: "group-replication", backupSource: backup },
       rows: restoreRows,
-    });
-    cluster.create(actor, {
+      observedSchema: backupObj.observedSchema,
+    };
+    const restoreObject: CrObject = {
       kind: "PerconaServerMySQLRestore",
-      namespace: request.restoreNamespace,
+      namespace: request.plan.restoreNamespace,
       name: restore,
       uid: `${request.operationId}-restore`,
       generation: 1,
@@ -258,67 +352,112 @@ export function executeBackupProof(input: ExecuteInput): ExecuteResult {
       specDigest: request.planHash,
       spec: { backupName: backup, restoreClusterName: restoredCluster },
       rows: restoreRows,
-    });
-    appendEvent(cluster, actor, request.operationId, "RestoreCreated", { name: restore });
-  } catch (error) {
-    if (error instanceof AdapterConflictError) {
-      return deny(request.operationId, request.planHash, "BLOCKED");
+    };
+    phaseNow = reduceJournal(cluster.listJournal().filter((event) => event.operationId === request.operationId));
+    if (phaseNow === "backed_up") {
+      appendEvent(cluster, actor, request.operationId, "RestoreWriteAhead", { name: restore });
+      if (crashAfter === "RestoreWriteAhead") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      phaseNow = "restore_wa";
     }
-    return mapAdapter(request, error);
-  }
-  const oracle = evaluateOracle(restoreRows);
-  if (!oracle.pass) {
-    return deny(request.operationId, request.planHash, "ORACLE_FAILED");
-  }
-  const unsignedEvidence: Omit<EvidenceManifest, "signature"> = {
-    operationId: request.operationId,
-    planHash: request.planHash,
-    actor: actor.actorId,
-    clusterUid: request.plan.clusterUid,
-    sourceNamespace: request.plan.target.namespace,
-    restoreNamespace: request.restoreNamespace,
-    targetPre: request.plan.target,
-    targetPost: postTarget,
-    artifactDigest: sha256Canonical(restoreRows),
-    oracle: {
-      schemaDigest: oracle.schemaDigest,
-      count: oracle.count,
-      primaryKeyMin: oracle.primaryKeyMin,
-      primaryKeyMax: oracle.primaryKeyMax,
-      orderedRowHash: oracle.orderedRowHash,
-      setBAbsent: oracle.setBAbsent,
-    },
-    driftedDuring,
-    pinsDigest: sha256Canonical(STARTUP_PINS),
-    keyId: keys.execution.keyId,
-  };
-  const evidence: EvidenceManifest = {
-    ...unsignedEvidence,
-    signature: signCanonical(keys.execution.privateKeyPem, unsignedEvidence),
-  };
-  appendEvent(cluster, actor, request.operationId, "EvidenceClosed", {
-    planHash: request.planHash,
-    driftedDuring: String(driftedDuring),
-    evidence: JSON.stringify(evidence),
-  });
-  try {
-    cluster.releaseFence(actor, readTarget(post), fence);
-  } catch {
-    return deny(request.operationId, request.planHash, "FENCE_RELEASE_BLOCKED");
-  }
-  return result(
-    {
+    if (phaseNow === "restore_wa") {
+      try {
+        cluster.create(actor, clusterObject);
+      } catch (error) {
+        if (!(error instanceof AdapterConflictError)) {
+          return mapAdapter(request, error);
+        }
+        const existing = cluster.get(actor, "PerconaServerMySQL", request.plan.restoreNamespace, restoredCluster);
+        if (!existing || !exactObject(existing, clusterObject)) {
+          return deny(request.operationId, request.planHash, "BLOCKED");
+        }
+      }
+      try {
+        cluster.create(actor, restoreObject);
+      } catch (error) {
+        if (!(error instanceof AdapterConflictError)) {
+          return mapAdapter(request, error);
+        }
+        const existing = cluster.get(actor, "PerconaServerMySQLRestore", request.plan.restoreNamespace, restore);
+        if (!existing || !exactObject(existing, restoreObject)) {
+          return deny(request.operationId, request.planHash, "BLOCKED");
+        }
+      }
+      appendEvent(cluster, actor, request.operationId, "RestoreCreated", { name: restore });
+      if (crashAfter === "RestoreCreated") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+    }
+    const restored = cluster.get(actor, "PerconaServerMySQL", request.plan.restoreNamespace, restoredCluster);
+    if (!restored?.rows || !restored.observedSchema) {
+      return deny(request.operationId, request.planHash, "ORACLE_FAILED");
+    }
+    const oracle = evaluateOracle(restored.rows, restored.observedSchema);
+    if (!oracle.pass) {
+      return deny(request.operationId, request.planHash, "ORACLE_FAILED");
+    }
+    const journal = cluster.listJournal().filter((event) => event.operationId === request.operationId);
+    const unsignedEvidence: Omit<EvidenceManifest, "signature"> = {
       operationId: request.operationId,
       planHash: request.planHash,
-      denial: driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : null,
-      evidence,
+      actor: actor.actorId,
+      clusterUid: request.plan.clusterUid,
+      sourceNamespace: request.plan.target.namespace,
+      restoreNamespace: request.plan.restoreNamespace,
+      targetPre: request.plan.target,
+      targetPost: postTarget,
+      approval: request.approval,
+      journalRoot: journal[0]!.eventDigest,
+      journalHead: journal[journal.length - 1]!.eventDigest,
+      backupArtifactId: backupObj.artifactId ?? "",
+      backupArtifactDigest: backupObj.artifactDigest,
+      observedSchemaDigest: oracle.schemaDigest,
+      artifactDigest: backupObj.artifactDigest,
+      oracle: {
+        schemaDigest: oracle.schemaDigest,
+        count: oracle.count,
+        primaryKeyMin: oracle.primaryKeyMin,
+        primaryKeyMax: oracle.primaryKeyMax,
+        orderedRowHash: oracle.orderedRowHash,
+        setBAbsent: oracle.setBAbsent,
+      },
       driftedDuring,
-    },
-    false,
-  );
+      verdict: driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : "OK",
+      pinsDigest: sha256Canonical(STARTUP_PINS),
+      keyId: keys.execution.keyId,
+    };
+    const evidence: EvidenceManifest = {
+      ...unsignedEvidence,
+      signature: signCanonical(keys.execution.privateKeyPem, unsignedEvidence),
+    };
+    try {
+      cluster.releaseFence(actor, readTarget(post), fence);
+    } catch {
+      appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", { fence });
+      return deny(request.operationId, request.planHash, "FENCE_RELEASE_BLOCKED");
+    }
+    appendEvent(cluster, actor, request.operationId, "EvidenceClosed", {
+      planHash: request.planHash,
+      verdict: evidence.verdict,
+      evidence: JSON.stringify(evidence),
+    });
+    return result(
+      {
+        operationId: request.operationId,
+        planHash: request.planHash,
+        denial: driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : null,
+        evidence,
+        driftedDuring,
+      },
+      false,
+    );
+  } catch (error) {
+    return mapAdapter(request, error);
+  }
 }
 
-function mapAdapter(request: BackupProofRequest, error: unknown): InternalResult {
+function mapAdapter(request: { operationId: string; planHash: string }, error: unknown): ExecuteResult {
   if (error instanceof AdapterTimeoutError) {
     return deny(request.operationId, request.planHash, "TIMEOUT");
   }
@@ -328,11 +467,8 @@ function mapAdapter(request: BackupProofRequest, error: unknown): InternalResult
   if (error instanceof AdapterFailureError || error instanceof AdapterConflictError) {
     return deny(request.operationId, request.planHash, "ADAPTER_FAILURE");
   }
-  if (error instanceof Error && error.message === "LEASE_CONTENDED") {
-    return deny(request.operationId, request.planHash, "LEASE_CONTENDED");
-  }
-  if (error instanceof Error && error.message === "BLOCKED") {
-    return deny(request.operationId, request.planHash, "BLOCKED");
+  if (error instanceof Error && (error.message === "LEASE_CONTENDED" || error.message === "BLOCKED" || error.message === "SCHEMA")) {
+    return deny(request.operationId, request.planHash, error.message === "LEASE_CONTENDED" ? "LEASE_CONTENDED" : "BLOCKED");
   }
   throw error;
 }

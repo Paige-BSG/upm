@@ -1,10 +1,10 @@
 import { FakeK8s } from "../src/fake-k8s.ts";
-export { FakeK8s };
 import { planHash } from "../src/plan-hash.ts";
 import { sha256Canonical } from "../src/rfc8785.ts";
 import { generateEd25519, signApproval } from "../src/signature.ts";
 import {
   CLUSTER_TYPE,
+  CONTROL_KINDS,
   PERCONA_KINDS,
   SCHEMA_VERSION,
   type Actor,
@@ -25,6 +25,7 @@ export const ACTOR: Actor = {
   actorId: "writer-1",
   namespaces: ["src", "dst", "upm-system"],
   kinds: PERCONA_KINDS,
+  controlKinds: CONTROL_KINDS,
 };
 
 export const TARGET: TargetRef = {
@@ -43,7 +44,13 @@ export function makeKeys() {
     approval,
     execution,
     trusted: {
-      approval: { [approval.keyId]: approval.publicKeyPem },
+      approval: {
+        [approval.keyId]: {
+          publicKeyPem: approval.publicKeyPem,
+          subject: "human-approver",
+          role: "approver",
+        },
+      },
       execution,
     },
   };
@@ -57,6 +64,10 @@ export function makePlan(overrides: Partial<PlanDocument> = {}): PlanDocument {
     clusterUid: "cluster-uid-1",
     targetNamespace: TARGET.namespace,
     targetNamespaceUid: "ns-src",
+    restoreNamespace: "dst",
+    restoreNamespaceUid: "ns-dst",
+    requiredApproverRole: "approver",
+    requiredApproverSubject: "human-approver",
     target: TARGET,
     factsSnapshotId: "facts-1",
     factsDigest: sha256Canonical(TARGET),
@@ -72,8 +83,11 @@ export function makePlan(overrides: Partial<PlanDocument> = {}): PlanDocument {
   };
 }
 
-export function makeRequest(nowMs: number, keys = makeKeys()): { request: BackupProofRequest; keys: ReturnType<typeof makeKeys> } {
-  const plan = makePlan();
+export function makeRequest(
+  nowMs: number,
+  keys = makeKeys(),
+  plan = makePlan(),
+): { request: BackupProofRequest; keys: ReturnType<typeof makeKeys> } {
   const hash = planHash(plan);
   const request: BackupProofRequest = {
     apiVersion: "upm.dev/v0",
@@ -81,7 +95,6 @@ export function makeRequest(nowMs: number, keys = makeKeys()): { request: Backup
     operationId: plan.operationId,
     plan,
     planHash: hash,
-    restoreNamespace: "dst",
     approval: signApproval(keys.approval, {
       approvalId: "apr-1",
       planHash: hash,

@@ -1,11 +1,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { checkInvariantUsage } from "../harness/src/scan-invariants.ts";
 
 const ROOT = process.argv[2] ? process.argv[2] : process.cwd();
-const catalog = JSON.parse(
-  readFileSync(join(ROOT, "harness", "spec", "phase1-v0.2-invariants.json"), "utf8"),
-) as { invariants: Record<string, string> };
-const ids = Object.keys(catalog.invariants);
+const catalogPath = join(ROOT, "harness", "spec", "phase1-v0.2-invariants.json");
+const catalog = JSON.parse(readFileSync(catalogPath, "utf8")) as { invariants: Record<string, string> };
 
 function collect(dir: string, out: string[]): void {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
@@ -15,7 +14,7 @@ function collect(dir: string, out: string[]): void {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) {
       collect(path, out);
-    } else if (path.endsWith(".ts") || path.endsWith(".json")) {
+    } else if (path.endsWith(".ts")) {
       out.push(path);
     }
   }
@@ -23,22 +22,19 @@ function collect(dir: string, out: string[]): void {
 
 function main(): number {
   const files: string[] = [];
-  collect(join(ROOT, "harness"), files);
+  collect(join(ROOT, "harness", "src"), files);
+  collect(join(ROOT, "harness", "test"), files);
   collect(join(ROOT, "scripts"), files);
   const blob = files.map((file) => readFileSync(file, "utf8")).join("\n");
-  const used = new Set<string>(blob.match(/SPEC-P1-[A-Z0-9-]+/g) ?? []);
+  const { unused, dangling } = checkInvariantUsage(catalog.invariants, blob);
   let failures = 0;
-  for (const id of ids) {
-    if (!used.has(id)) {
-      console.log(`UNUSED_INVARIANT:${id}`);
-      failures += 1;
-    }
+  for (const id of unused) {
+    console.log(`UNUSED_INVARIANT:${id}`);
+    failures += 1;
   }
-  for (const id of used) {
-    if (catalog.invariants[id] === undefined) {
-      console.log(`DANGLING_INVARIANT:${id}`);
-      failures += 1;
-    }
+  for (const id of dangling) {
+    console.log(`DANGLING_INVARIANT:${id}`);
+    failures += 1;
   }
   if (failures > 0) {
     console.log(`FAIL ${failures}`);

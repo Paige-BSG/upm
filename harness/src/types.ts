@@ -30,7 +30,11 @@ export const PERCONA_KINDS = [
   "PerconaServerMySQLRestore",
 ] as const;
 
+export const CONTROL_KINDS = ["ConfigMap", "Lease"] as const;
+
 export type PerconaKind = (typeof PERCONA_KINDS)[number];
+export type ControlKind = (typeof CONTROL_KINDS)[number];
+export type ResourceKind = PerconaKind | ControlKind;
 
 export type AgentCapabilities = {
   bash: boolean;
@@ -43,6 +47,7 @@ export type Actor = {
   actorId: string;
   namespaces: readonly string[];
   kinds: readonly PerconaKind[];
+  controlKinds: readonly ControlKind[];
 };
 
 export type TargetRef = {
@@ -61,6 +66,10 @@ export type PlanDocument = {
   clusterUid: string;
   targetNamespace: string;
   targetNamespaceUid: string;
+  restoreNamespace: string;
+  restoreNamespaceUid: string;
+  requiredApproverRole: string;
+  requiredApproverSubject: string;
   target: TargetRef;
   factsSnapshotId: string;
   factsDigest: string;
@@ -92,7 +101,6 @@ export type BackupProofRequest = {
   plan: PlanDocument;
   planHash: string;
   approval: ApprovalEnvelope;
-  restoreNamespace: string;
 };
 
 export type DenialCode =
@@ -118,7 +126,21 @@ export type JournalEventType =
   | "BackupCreated"
   | "RestoreWriteAhead"
   | "RestoreCreated"
-  | "EvidenceClosed";
+  | "EvidenceClosed"
+  | "FenceReleaseBlocked";
+
+export type JournalPhase =
+  | "empty"
+  | "intent"
+  | "approved"
+  | "fenced"
+  | "backup_wa"
+  | "backed_up"
+  | "restore_wa"
+  | "restored"
+  | "closed"
+  | "fence_blocked"
+  | "blocked";
 
 export type JournalEvent = {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -139,6 +161,12 @@ export type EvidenceManifest = {
   restoreNamespace: string;
   targetPre: TargetRef;
   targetPost: TargetRef;
+  approval: ApprovalEnvelope;
+  journalRoot: string;
+  journalHead: string;
+  backupArtifactId: string;
+  backupArtifactDigest: string;
+  observedSchemaDigest: string;
   artifactDigest: string;
   oracle: {
     schemaDigest: string;
@@ -149,6 +177,7 @@ export type EvidenceManifest = {
     setBAbsent: boolean;
   };
   driftedDuring: boolean;
+  verdict: DenialCode | "OK";
   pinsDigest: string;
   keyId: string;
   signature: string;
