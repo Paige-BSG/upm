@@ -68,11 +68,15 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 
 ### A. Plan, identity, and `planHash`
 
-- **A1.** The plan is a canonical JSON document composed of exactly these top-level fields:
-  `facts`, `actions`, `risks`, `budgets`, `policy`. It is **not** a free-form blob: `facts`
-  is the live target snapshot the harness took, `policy` the risk-tier and allow/deny
-  decision, `budgets` the per-action/time limits, and so on. The full identity this plan is
-  approved against is part of what `planHash` covers (A4).
+- **A1.** The plan is a canonical JSON document (`PlanDocument`) with an **exact versioned
+  field set**, all of which enter the RFC 8785 bytes (`A2`):
+  - `schemaVersion`; `operationId`; `actor`;
+  - the single cluster identity; the source and restore namespace identities; the source
+    target identity;
+  - `factsSnapshotId` / `factsDigest`;
+  - the full `actions` with their `parameters`; the artifact destination identity;
+  - `risk`; `timeout` / `budget` / `stop conditions`; `approvalPolicyVersion`.
+  It is **not** a free-form blob; every named field is required and hashes into `planHash`.
 - **A2.** `planHash` **SHALL** be the SHA-256, encoded as 64 lowercase hex, of the plan
   document serialised canonically per **RFC 8785 (JSON Canonicalization Scheme, JCS)** — not
   a language-specific `json.dumps`. JCS is the portable canonical form (UTF-16-based key
@@ -80,9 +84,11 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   **MUST** use an RFC 8785 canonicaliser, because `planHash` equality is only meaningful if
   two implementations produce byte-identical bytes for the same plan. Equal canonical bytes
   ⇒ equal `planHash`; a changed plan or a different serialisation ⇒ a different `planHash`.
-- **A3.** `planHash` is bound to an **actor**. There is no valid approval for a `planHash`
-  without the actor it was approved for. A plan re-presented under a different actor is a
-  different operation, even if its bytes are identical.
+- **A3.** `planHash` is bound to an **actor**, and `actor` is a **required field of the
+  `PlanDocument` itself** (`A1`), so it is part of the canonical bytes that `A2` hashes. The
+  outer request's actor **MUST** equal the plan's actor item-by-item; if they differ the
+  operation is invalid. There is no valid approval for a `planHash` whose request actor does
+  not equal the plan actor.
 - **A4.** The plan **SHALL** record the single identity the operation runs inside, and
   `planHash` covers all of it. This slice runs in **one** Kubernetes cluster, across
   **two** namespaces, creating a **new** MySQL CR for the restore:
@@ -95,9 +101,9 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
     immutable (it carries `resourceVersion` and `generation`, both mutable);
   - the **restore object** identity: the deterministic `name` (C1) and the expected spec of
     the new MySQL CR created in the restore namespace, which the operation hashes.
-- **A5.** The `budgets` field gives per-action and total time/limit budgets the harness
-  enforces; the `policy` field carries the risk-tier and allow/deny policy that gates
-  whether the labelled action may run.
+- **A5.** The `risk` field and the `timeout` / `budget` / `stop conditions` field give the
+  per-action and total time/limit budgets and stop conditions the harness enforces; the
+  `approvalPolicyVersion` field names the policy that gates whether a labelled action may run.
 
 ### B. Approval envelope
 
@@ -108,7 +114,9 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   only honoured for the `actor` + `planHash` it names.
 - **B2.** The signed envelope carries a **15-minute validity window** from issue to expiry.
   It is a **signed** envelope (B1); there is no such thing as a long-lived unsigned approval.
-  Beyond the window the envelope is void for any *new* issuance.
+  An **unconsumed** envelope **MUST NOT** be first-consumed after its expiry — beyond the
+  window the envelope is void for any *first* use. Only a **consumed** exact envelope for the
+  operation may be used to resume (`B3`).
 - **B3.** The signed envelope is **single-use** and **journal-bound** for resume. Once the
   approval and its canonical plan digest are recorded in the immutable journal, an operation
   that resumes across the 15-minute expiry **MUST** use that same journal-persisted **verified
@@ -133,38 +141,43 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 
 ### D. Immutable journal and restart
 
-- **D1.** The operation and evidence log **SHALL** be an append-only, immutable journal
-  stored as a hash chain (each entry commits to the previous entry's digest), carried in a
-  ConfigMap under the control-plane ServiceAccount (I2). The journal ConfigMap **SHALL** have
-  a **deterministic name** derived from (`operationId`, `planHash`) (C1), so re-runs address
-  the same journal and the chain is never orphaned.
-- **D2.** Each journal entry is a **complete typed event record** with a defined field set:
-  `eventId`, `operationId`, `phase`, `actor`, `intent`, `facts` (the live snapshot), the
-  cluster + namespace + each CR identity, the artifact, the target **pre/post** state, the
-  oracle result, the timeline, the exact pins (`retrievedAt`, digests), `keyId`, and
-  `signature`. An entry is valid only if it carries the full set; a partial event is not
-  accepted into the chain.
-- **D3.** Every effect is journaled **write-ahead**: the API call and the observed reconcile
-  **MUST** be recorded before the effect is treated as committed, so the chain preserves the
-  intent-to-observed causal order.
+- **D1.** The operation log **SHALL** be an append-only, immutable chain of **events**, each
+  stored as a **new ConfigMap with `immutable: true`** under the control-plane ServiceAccount
+  (`I2`), so a past event can never be edited. The event ConfigMap **deterministic name** is
+  `SHA-256(operationId) + "-" + sequence`, so re-runs address the same chain and the
+  sequence is monotonic.
+- **D2.** Each event envelope **MUST** carry exactly: `schemaVersion`, `operationId`,
+  `sequence`, `type`, `previousEventDigest`, `eventDigest` — plus the event-specific payload.
+  The event digests chain each event to the previous one (hash chain). The full closure
+  (`actor`, `facts`, `CR` / `artifact` / `oracle` / `timeline` / `exact pins`) is part of the
+  terminal **EvidenceManifest** (`G4`); it is **not** required to be repeated in every
+  intermediate event.
+- **D3.** Every external effect follows a strict journaled order: **write-ahead event → API
+  call → observed / reconciled event**. The write-ahead event is recorded before the effect is
+  dispatched, and the observed / reconciled event after the API returns; at any boundary
+  crash the reconciler resumes or blocks per `D5`.
 - **D4.** The journal is not open-ended by intent: unbounded growth is an acknowledged
   boundary, written here so it is a documented limitation rather than a hidden one.
 - **D5.** On restart, the reconciler reads the persisted journal state and **MUST** do only
   one of: **resume** the in-flight operation from the last persisted state (reconcile), or
   enter **BLOCKED**. It **MUST NOT** silently start a fresh journal or rewind the chain;
-  that would break evidence continuity and the hash-chain integrity of the terminal verdict.
+  that would break evidence continuity.
 
 ### E. Version fence, residual risk, and finalisation
 
-- **E1.** The `metadata.resourceVersion` fence is a **write precondition on the approved
-  revision**: it proves that, at the instant the target was read, its version matched the
-  approved plan (A4). It is an optimistic-concurrency guard, **not** a lock.
+- **E1.** The fence is a **write precondition applied atomically at the first mutation**: the
+  first mutation **MUST** be an atomic JSON Patch that `test`s the approved `resourceVersion`
+  (and the required annotation state) then `add`s `upm.io/backup-proof-fence=operationId:planHash`.
+  Success proves only that, **at the fence-mutation moment**, the object's version matched the
+  approved version (`A4`) — **not** that it did at some earlier read. It is an
+  optimistic-concurrency guard, **not** a lock.
 - **E2.** **Residual risk (must be stated, not hidden).** The fence only proves the approved
-  version **at entry**. It does not freeze the object and cannot eliminate a **cross-object
-  TOCTOU** where an external administrator changes a *related* object (the actual database,
-  operator state, or namespace) between the fenced read and the write. The fence does not
-  make two separately-managed objects atomic; this risk is accepted and documented, not
-  claimed away.
+  version **at the fence mutation**. It does not freeze the object and cannot eliminate a
+  **TOCTOU** where an external administrator, after the fence, modifies **the target object
+  itself** (its spec / `resourceVersion`), or a **related** object (the actual database,
+  operator state, or namespace). The fence does not make two separately-managed objects atomic,
+  and it cannot stop a privileged actor from mutating the target after it is set. This risk is
+  accepted and documented, not claimed away.
 - **E3.** The fence **MUST** be released only by the same actor/operation that set it. Any
   attempt to release a fence that is not its own, or to proceed past an un-releasable fence,
   **MUST** terminate with `FENCE_RELEASE_BLOCKED`, not a silent continue.
@@ -172,6 +185,10 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   same ordered journal entries and their digests, any replayer or verifier computes the
   same terminal outcome deterministically. The verdict function **MUST NOT** depend on
   wall-clock time or unrecorded randomness.
+- **E5.** The two terminal failures **MUST** both produce replay-stable signed **failure**
+  evidence: `TARGET_DRIFTED_DURING_OPERATION` (`H1`) and `FENCE_RELEASE_BLOCKED` (`E3`). A
+  `FENCE_RELEASE_BLOCKED` **MUST NOT** write an `EvidenceClosed` record that a replayer could
+  interpret as success; it writes failure evidence only.
 
 ### F. A/B SQL oracle
 
@@ -189,6 +206,14 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   - the exact `id` set = `1..1000` (no row has `id` = `1001..1100`);
   - the **ordered-row SHA** (SHA-256 over all rows ordered by `id`) = the recorded
     backup-time **A**-row SHA.
+- **F5.** The verifier-recomputed byte representations are **fixed and language-neutral**, so
+  a cross-language verifier can recompute them:
+  - the **schema digest** is SHA-256 of a **fixed schema descriptor** — the byte-exact,
+    normalised `CREATE TABLE backup_proof_items (...) ;` text of `F1`;
+  - the **ordered-row SHA** is SHA-256 of the **RFC 8785 canonical serialisation** of the rows
+    array `[{"id":1,"payload":"<hex>"}, …]` ordered by `id`, where each `payload` is the
+    64-lowercase-hex SHA-256 of the canonical decimal `id`. No implementation-specific
+    separator or whitespace, no locale-dependent formatting.
 
 ### G. Evidence vs approval; provenance
 
@@ -203,12 +228,14 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 - **G3.** Large evidence bodies (full backups, logs, big artifact dumps) are **externalised**
   outside the journal; the journal stores only the **digest + signature** of each external
   body, so integrity is preserved without bloating the chain.
-- **G4.** The offline closure **MUST** be a **signed success/failure evidence bundle** that
-  references the full closure: the **approval** (`planHash` + `actor` + signature), the
-  journal **root** and **head** digests, and the signed set of `actor`, `intent`, `facts`,
-  the cluster + namespace + each CR identity, the artifact, target **pre/post**, the oracle,
-  the timeline, the exact pins, `keyId`, and `signature` — so an offline verifier can
-  reconstruct the whole chain: approval → journal root → journal head → the signed closure.
+- **G4.** The offline closure **MUST** be a **signed success/failure EvidenceManifest** that
+  **MUST explicitly bind** — not merely infer from the approval — `operationId`, `planHash`,
+  the CR `UID` / `generation`, and the real artifact identity and its `digest`. It references
+  the **approval** (`planHash` + `actor` + signature), the journal **root** and **head**
+  digests, and the signed set of `actor`, `intent`, `facts`, the cluster + namespace + each CR
+  identity, target **pre/post**, the oracle, the timeline, the exact pins, `keyId`, and
+  `signature` — so an offline verifier can reconstruct the whole chain: approval → journal
+  root → journal head → the signed manifest, recomputing the oracle bytes from `F5`.
 
 ### H. Subject-verifying failures are terminal, not silent
 
@@ -273,14 +300,13 @@ only as a prose label. `SHALL` conveys a normative requirement.
 | Exact invariant ID (`SPEC-P1-*`) | Defined by | Normative meaning |
 |---|---|---|
 | `SPEC-P1-SCOPE-NONDESTRUCTIVE` | A4, C, F, Validation | The backup path does not destructively modify the source data it is proving (the A state is preserved and then restored); the operation *does* write test data to the source after backup (B rows, F3), so it is **not** "never mutates the source", and the restore runs in a **new namespace of the same cluster** with a **new** MySQL CR (A4), not a different cluster. |
-| `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the plan document (facts/actions/risks/budgets/policy) *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
+| `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the exact `A1` plan document field set *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
 | `SPEC-P1-APPROVAL-ED25519` | B1–B3 | Approval is an Ed25519-signed, single-use envelope with a 15-min validity window; resume across expiry is bound to the journal-persisted same verified signed envelope + canonical digest, never a fresh re-approval. |
-| `SPEC-P1-JOURNAL-CHAIN` | D1–D3 | The journal is an append-only hash-chain ConfigMap with a deterministic name (operationId+planHash); each entry is a complete typed event record; effects are journaled write-ahead. |
-| `SPEC-P1-APPEND-ONLY` | D4 | The journal is append-only; unbounded growth is an acknowledged boundary. |
+| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1–D5 | The journal is a chain of immutable ConfigMap events, deterministic name `SHA-256(operationId)`+ sequence, each envelope carrying `schemaVersion/operationId/sequence/type/previousEventDigest/eventDigest`; effects journaled write-ahead; unbounded growth acknowledged; on restart only resume or `BLOCKED`. |
 | `SPEC-P1-RESUME-OR-BLOCKED` | D5 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
-| `SPEC-P1-TARGET-FENCE` | E1, E3 | `resourceVersion` fence + only-own-fence release (else `FENCE_RELEASE_BLOCKED`); cross-object TOCTOU residual risk (`E2`) is accepted and documented. |
+| `SPEC-P1-TARGET-FENCE` | E1, E3, E5 | atomic JSON-Patch `test`+`add` fence proving the fence-mutation moment; only-own-fence release (else `FENCE_RELEASE_BLOCKED`); TOCTOU residual risk (`E2`, incl. post-fence target mutation) accepted and documented; both terminal failures emit replay-stable signed failure evidence. |
 | `SPEC-P1-DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
-| `SPEC-P1-ORACLE-AB` | F1–F4 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows. |
+| `SPEC-P1-ORACLE-AB` | F1–F5 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows; digest bytes are the fixed `F5` canonical representation. |
 | `SPEC-P1-EVIDENCE-SIGN` | G1–G4 | Evidence signed separately from approval; large bodies externalised (journal stores digest + signature); signed success/failure closure references approval + journal root/head + the full signed set. |
 | `SPEC-P1-LEASE-NOT-SECURITY` | I4 | Lease fixed 30s / renew 10s; reduces contention only, never a safety mechanism. |
 | `SPEC-P1-AGENT-NO-PRIVILEGE` | I1 | The agent has no `bash` / `kubectl` / `kubeconfig` / DB admin access. |
@@ -300,7 +326,8 @@ MinIO, then:
 
 This shows the backup captured a real, consistent snapshot, restored somewhere isolated (a
 fresh namespace + new MySQL CR in the same cluster), and produced auditable, signed evidence —
-without touching the source cluster's committed data.
+without overwriting or deleting **A**, without an in-place restore, and without a destructive
+source mutation (the only source write is the intentional **B** rows of `F3`).
 
 ## Non-goals (Phase 1)
 
