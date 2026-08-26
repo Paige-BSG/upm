@@ -7,20 +7,20 @@ The **short-term goal** is to validate, in the open, an AI-native data-service o
 plane: an in-product agent that takes intent, a domain harness that is the security
 contract, and deterministic operators that execute the change.
 
-## Phases
+## Where the project is now
 
-1. **Public skeleton** — establish the public documentation and the agent LLM wiki, and
-   lay down the branch/pull-request contract. This is what exists today.
-2. **Knowledge base** — ingest the external resources and open-source components the
-   product references or compares against (agents, operators, package charts, datastore
-   engines) into `llm-wiki/`, each pinned and license-aware.
-3. **Phase 0 slice** — the first agent → plan → approval → backup → isolated restore →
-   evidence loop, on the three-layer architecture. This validates the control-plane
-   design; it is a proof, not a shipped product.
-4. **Product code** — release the control-plane components, with the project docs
-   describing them accurately.
-5. **Automation** — add product-code gates and wire the existing checks into CI once
-   there is code to test.
+- **Foundation (done)** — the public repository skeleton, the Nimbus documentation site,
+  the agent LLM wiki, and the branch / pull-request and governance contract. This is the
+  groundwork, not a product phase.
+- **Phase 1 — BackupProof (Spec v0.2)** — the first product technical validation: an agent
+  → plan → signed approval → backup → isolated restore → evidence slice, on the
+  three-layer architecture. It proves the control-plane design; it is a validation, not a
+  shipped product. Program detail in [Phase 1 — BackupProof](/architecture/phase-1-backupproof).
+- **Parallel discovery track** — market interviews and requirements-validation writing
+  continue separately from BackupProof; they are not a repo phase.
+- **Later** — release the control-plane components with docs that describe them
+  accurately, then add the product-code gates and wire the docs / wiki / secret checks
+  into CI.
 
 ## Principles
 

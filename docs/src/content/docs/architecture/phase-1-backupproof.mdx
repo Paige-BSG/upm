@@ -1,0 +1,138 @@
+---
+title: Phase 1 — BackupProof
+description: The first product technical validation for UPM — a backup/restore proof on the three-layer architecture. Spec v0.2.
+---
+
+**Phase 1 — BackupProof** is UPM's first product technical validation. It is a
+**validation**, not a delivered capability and not production high availability. It proves
+the three-layer architecture end to end on one operation — a backup — with an isolated
+restore that proves the backup is real.
+
+> **Spec version.** This page records the current spec, **v0.2** (Opus-reviewed), which
+> builds on the v0.1 core and adds the engineering-hardening items listed below. The exact
+> data-plane pins (CRD / API, image digests) are still **pending admission** and are marked
+> `candidate/pending admission`, not closed.
+
+The slice is:
+
+`intent → live facts → plan/risk → signed approval → backup → isolated restore → SQL/data proof → offline evidence`
+
+## Runtime and language
+
+UPM's own Phase 1 code is **TypeScript on Node 22, and TypeScript only**. The runtime is
+layered as:
+
+1. **Agent / intent** — the in-product agent, built on the **Pi Agent** runtime
+   ([`earendil-works/pi`](https://github.com/earendil-works/pi), MIT; `pi-agent-core` +
+   `pi-ai`). The agent loop, tool calling, and model abstraction come from Pi; UPM does
+   **not** carry Pi's coding-agent `bash`, file, or process permissions into production.
+2. **Domain harness** — the security contract UPM spells itself (typed tools, a realtime
+   fact snapshot, permissions, risk-tiering, approval, idempotency, timeouts, evidence,
+   audit).
+3. **Deterministic execution** — a narrow adapter over the external operator using
+   [`@kubernetes/client-node`](https://github.com/kubernetes-client/javascript). A typed,
+   thin client; not a shell, not cluster-admin.
+
+**Long-term** the self-built languages are **TypeScript + Rust**. Rust is introduced only
+when UPM ships its own reconcile / finalizer / leader-election operator. Phase 1 does not
+introduce Rust.
+
+## Data-plane candidate
+
+The data plane is an external component UPM drives, not UPM source code:
+
+- **Percona Server for MySQL Operator** v1.2.0 — the non-PXC, group-replication variant.
+- **Percona Server for MySQL** 8.4.10-10.1.
+- **Percona XtraBackup**.
+- **MinIO** — object storage for the backup, used as a replaceable **test** S3, never
+  distributed as part of UPM.
+
+The Operator's own images are Go — but that is external software, **not** UPM's source, so
+it is not accurate to write "UPM uses Go". UPM's own code is TypeScript/Node 22.
+
+The exact CRD / API shape and all image digests are **pending admission**, recorded as
+`candidate/pending admission`.
+
+## BackupProof semantics
+
+- **BackupProof** is a **versioned API / JSON Schema** plus **immutable operation and
+  evidence** records.
+- It is **not** a universal DSL for all database operations, and **no UPM CRD is frozen yet**.
+
+## v0.2 engineering hardening
+
+The v0.2 review adds these guarantees on top of the v0.1 core:
+
+- **Immutable ConfigMap hash-chain journal** — the operation and evidence log is an
+  immutable journal, stored as a hash chain, so history is tamper-evident.
+- **Deterministic create** — creates are deterministic (predictable, repeatable output).
+- **Lease reduces contention only** — a Kubernetes Lease is used to cut contention, but it
+  is **not** a safety mechanism; safety comes from the harness contract.
+- **`metadata.resourceVersion` fence** — an optimistic-concurrency fence on the target
+  object so a stale object is never acted on.
+- **Signed one-time 15-minute approval** — approval is a signed, single-use token that
+  expires after 15 minutes and is bound to the `planHash`.
+- **Restart reconcile** — the reconciler resumes correctly after a restart.
+- **Running-target post-read + `TARGET_DRIFTED_DURING_OPERATION`** — the live target is
+  re-read during the operation; if it has drifted from the approved plan, the operation
+  fails closed with `TARGET_DRIFTED_DURING_OPERATION`.
+- **Non-destructive declaration** — the plan / declaration is non-destructive by design.
+- **Fixed A/B SQL oracle** — a fixed SQL oracle (the same query set on both sides) is used
+  to prove data consistency.
+- **Signed evidence with limited provenance** — each evidence record is signed and declares
+  exactly what it proves and that its provenance is limited.
+- **Journal unbounded growth is a known boundary** — the journal can grow without bound; it
+  is a documented, acknowledged limitation rather than a hidden one.
+
+## Security contract
+
+- The agent has **no** `bash`, `kubectl`, `kubeconfig`, or database admin access. It sees
+  only the typed domain tools the harness exposes.
+- The adapter **ServiceAccount** is limited to the designated namespace and the Percona CR
+  — never cluster-wide.
+- Approval is a **signed one-time token bound to `planHash`** and expires after 15 minutes.
+- **Drift fails closed** — if the live cluster facts diverge from the approved plan, the
+  operation stops (`TARGET_DRIFTED_DURING_OPERATION`) rather than proceeding on stale
+  assumptions.
+- **`operationId` is idempotent** — retries do not double-apply the operation.
+
+## What "real" validation means here
+
+The proof is a fixed set of **synthetic data** backed up to MinIO, then:
+
+1. Write more data **after** the backup has been taken.
+2. **Restore to a different namespace** and a freshly created cluster.
+3. Verify the **backup-time data** with the fixed SQL oracle, and confirm the **offline
+   evidence** is present; the post-backup write is not.
+
+This shows the backup captured a real, consistent snapshot, restored somewhere isolated,
+and produced auditable, signed evidence — without touching the original cluster.
+
+## Non-goals (Phase 1)
+
+Out of scope for this slice, and not claimed:
+
+- In-place production restore.
+- Point-in-time recovery.
+- High availability / failover.
+- Scale-out.
+- Upgrade.
+- Multiple engines.
+- Automatic cleanup.
+- A full web UI.
+- Cloud-provider integrations.
+- A self-built MySQL Operator.
+
+## Numbering
+
+**Phase 1 = BackupProof, the product technical validation.** The base repository /
+documentation / knowledge base are **foundation**, not a product phase. Market
+interviews and requirements-validation writing are a **parallel discovery track**. The
+BackupProof slice is not called "Phase 0".
+
+## Where the detail lives
+
+Every external resource and open-source component referenced here is pinned and
+license-aware in the agent LLM wiki (`llm-wiki/` in this repository). The
+[related projects](/reference/related-projects) page lists the same candidates from a
+human-facing angle.

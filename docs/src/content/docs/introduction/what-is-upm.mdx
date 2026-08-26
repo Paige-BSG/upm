@@ -25,10 +25,23 @@ From day one the product is designed as three layers:
    Kubernetes tools, a realtime fact snapshot, permissions, risk-tiering, approval,
    idempotency, timeouts, evidence, and audit. The agent reasons and orchestrates; UPM
    holds the safety contract.
-3. **Deterministic execution** — open-source operators and controllers that actually
-   perform the change: backup, restore, failover, upgrade. Pi is responsible for
-   reasoning and orchestration; the deterministic controllers are responsible for
-   changing data.
+3. **Deterministic execution** — the controllers that actually perform the change: backup,
+   restore, failover, upgrade. In Phase 1 UPM drives an **external** operator through a
+   narrow `@kubernetes/client-node` adapter — UPM's own deterministic code is TypeScript on
+   Node 22, not UPM writing the MySQL HA itself. Pi reasons and orchestrates; the
+   deterministic controllers change data.
+
+## Phase 1 today
+
+The published spec is **Phase 1 Spec v0.2 — BackupProof**: a backup/restore product
+technical validation on the three-layer architecture — `intent → live facts → plan/risk →
+signed approval → backup → isolated restore → SQL/data proof → offline evidence`. It is a
+validation, not a delivered capability or production high availability.
+
+UPM's own Phase 1 code is **TypeScript on Node 22 only**; the data plane is an **external**
+Percona Server for MySQL Operator candidate (non-PXC, group replication) with Percona
+Server 8.4.10-10.1, XtraBackup, and MinIO — recorded as `candidate/pending admission`.
+See [Phase 1 — BackupProof](/architecture/phase-1-backupproof).
 
 ## Why it exists
 

@@ -76,3 +76,28 @@ Tightened the frozen test after @Sol's last cut (pin typing):
 - Added regression tests for the real measured values: `ref=main`, `version=latest`, and
   `sha=not-a-sha` each FAIL (each is dynamic — missing `retrievedAt`). Existing 7
   scenarios preserved; 10 scenarios total.
+
+## 2026-08-27 ingest | Phase 1 tech-stack records
+
+Phase 1 (BackupProof) brings the first product tech-stack records. Each is a
+content-addressed identity record (byte count + SHA-256 of the fetched upstream page, no
+body copy). All are frozen via an exact immutable pin:
+
+- `raw/sources/pi-agent` — Pi Agent runtime (`earendil-works/pi`, MIT), tag `v0.84.3`.
+  **PRODUCT STACK (ADOPTED)**. Derived: `technologies/pi-agent`.
+- `raw/sources/percona-server-mysql-operator` — Percona Server for MySQL Operator
+  (Apache-2.0), tag `v1.2.0`, API `ps.percona.com/v1`, non-PXC group-replication.
+  **DATA-PLANE CANDIDATE (pending admission)**. Derived: `technologies/percona-server-mysql-operator`.
+- `raw/sources/percona-server-mysql` — Percona Server for MySQL `8.4.10-10.1`, **SPDX
+  PENDING** (Oracle LIUM). **DATA-PLANE CANDIDATE (pending admission)**. Derived:
+  `technologies/percona-server-mysql`.
+- `raw/sources/percona-xtrabackup` — Percona XtraBackup `8.4.0-6.1`, **SPDX PENDING**
+  (Oracle LIUM). **DATA-PLANE CANDIDATE (pending admission)**. Derived:
+  `technologies/percona-xtrabackup`.
+- `raw/sources/minio` — MinIO (AGPL-3.0) `RELEASE.2025-10-15T17-29-55Z`. **DATA-PLANE
+  CANDIDATE (pending admission)**; test S3 only. Derived: `technologies/minio`.
+- `raw/sources/kube-rs` — kube-rs (Apache-2.0) `4.2.0`. **FUTURE** (Rust operator later).
+  Derived: `technologies/kube-rs`.
+
+`raw/index.json` now points to all 11 ids; `wiki/index.md` rows and `wiki/sources/<id>.md`
+pages added for each new record. Unclosed: MinIO image digest, PS / XtraBackup SPDX.
