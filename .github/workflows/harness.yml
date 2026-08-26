@@ -12,9 +12,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
       - run: node --experimental-strip-types scripts/check_no_comments.ts .
       - run: node --experimental-strip-types scripts/check_invariant_ids.ts .
       - run: node --experimental-strip-types scripts/check_public_secrets.ts .
-      - run: node --experimental-strip-types --test test/*.test.ts
+      - run: npm ci
+        working-directory: harness
+      - run: npm run typecheck
+        working-directory: harness
+      - run: npm test
         working-directory: harness

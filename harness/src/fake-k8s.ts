@@ -95,9 +95,11 @@ export class FakeK8s {
       ...object,
       annotations: { ...object.annotations },
       spec: { ...object.spec },
-      rows: object.rows?.map((row) => ({ ...row })),
       resourceVersion: object.resourceVersion || this.nextVersion(),
     };
+    if (object.rows) {
+      stored.rows = object.rows.map((row) => ({ ...row }));
+    }
     this.objects.set(key(stored.namespace, stored.kind, stored.name), stored);
     return stored;
   }
@@ -115,9 +117,11 @@ export class FakeK8s {
       ...object,
       annotations: { ...object.annotations },
       spec: { ...object.spec },
-      rows: object.rows?.map((row) => ({ ...row })),
       resourceVersion: this.nextVersion(),
     };
+    if (object.rows) {
+      stored.rows = object.rows.map((row) => ({ ...row }));
+    }
     this.objects.set(key(stored.namespace, stored.kind, stored.name), stored);
     return stored;
   }
