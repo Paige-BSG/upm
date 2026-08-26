@@ -80,7 +80,11 @@ export function makePlan(overrides: Partial<PlanDocument> = {}): PlanDocument {
     }),
     actions: ["backup", "isolated-restore"],
     parameters: { clusterType: CLUSTER_TYPE },
-    artifactDestination: "s3://test-bucket/op-1",
+    artifactDestination: {
+      bucket: "test-bucket",
+      objectKey: "op-1",
+      endpoint: "https://s3.test.invalid",
+    },
     risk: "non-destructive",
     timeoutMs: 60000,
     budget: "size=1",

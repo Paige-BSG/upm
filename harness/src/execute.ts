@@ -48,6 +48,7 @@ export type CrashAfter =
   | "afterBackupApi"
   | "afterRestoreApi"
   | "afterSetBApi"
+  | "afterEvidenceStore"
   | "none";
 
 export type ExecuteInput = {
@@ -437,7 +438,10 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       specDigest: request.planHash,
       spec: {
         mysqlName: request.plan.target.name,
-        destination: request.plan.artifactDestination,
+        destination: sha256Canonical(request.plan.artifactDestination),
+        destinationBucket: request.plan.artifactDestination.bucket,
+        destinationObjectKey: request.plan.artifactDestination.objectKey,
+        destinationEndpoint: request.plan.artifactDestination.endpoint,
         factsDigest: request.plan.factsDigest,
       },
       rows: snapshot,
@@ -721,30 +725,104 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       verdict: evidence.verdict,
       evidenceDigest,
       signature: evidence.signature,
+      closedAtMs: String(evidence.timeline.closedAtMs),
     };
     if (phaseNow === "fence_rel_wa") {
       const current = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
       if (!current) {
         return deny(request.operationId, request.planHash, "DRIFT");
       }
-      if (current.annotations[FENCE_ANNOTATION] === undefined) {
-        cluster.putEvidence(evidenceDigest, evidence);
-        appendEvent(cluster, actor, request.operationId, "EvidenceClosed", closePayload);
-      } else if (current.annotations[FENCE_ANNOTATION] === fence) {
+      if (current.annotations[FENCE_ANNOTATION] === fence) {
         try {
           cluster.releaseFence(actor, readTarget(current), fence);
         } catch {
-          appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", { fence });
-          return deny(request.operationId, request.planHash, "FENCE_RELEASE_BLOCKED");
+          const blockedUnsigned: Omit<EvidenceManifest, "signature"> = {
+            ...unsignedEvidence,
+            verdict: "FENCE_RELEASE_BLOCKED",
+            driftedDuring,
+          };
+          const blocked: EvidenceManifest = {
+            ...blockedUnsigned,
+            signature: signCanonical(keys.execution.privateKeyPem, blockedUnsigned),
+          };
+          const blockedDigest = sha256Canonical(blocked);
+          appendEvent(cluster, actor, request.operationId, "EvidenceStoreWriteAhead", { evidenceDigest: blockedDigest });
+          cluster.putEvidence(blockedDigest, blocked);
+          if (crashAfter === "afterEvidenceStore") {
+            return deny(request.operationId, request.planHash, "BLOCKED");
+          }
+          appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", {
+            planHash: request.planHash,
+            verdict: blocked.verdict,
+            evidenceDigest: blockedDigest,
+            signature: blocked.signature,
+            closedAtMs: String(blocked.timeline.closedAtMs),
+          });
+          return result(
+            {
+              operationId: request.operationId,
+              planHash: request.planHash,
+              denial: "FENCE_RELEASE_BLOCKED",
+              evidence: blocked,
+              driftedDuring,
+            },
+            false,
+          );
         }
         if (crashAfter === "afterReleaseApi") {
           return deny(request.operationId, request.planHash, "BLOCKED");
         }
-        cluster.putEvidence(evidenceDigest, evidence);
-        appendEvent(cluster, actor, request.operationId, "EvidenceClosed", closePayload);
-      } else {
+      } else if (current.annotations[FENCE_ANNOTATION] !== undefined) {
         return deny(request.operationId, request.planHash, "DRIFT");
       }
+      appendEvent(cluster, actor, request.operationId, "EvidenceStoreWriteAhead", { evidenceDigest });
+      cluster.putEvidence(evidenceDigest, evidence);
+      if (crashAfter === "afterEvidenceStore") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      appendEvent(cluster, actor, request.operationId, "EvidenceClosed", closePayload);
+    } else if (phaseNow === "evidence_wa") {
+      const storedDigest = eventsFor().find((event) => event.type === "EvidenceStoreWriteAhead")?.payload.evidenceDigest;
+      const stored = storedDigest ? cluster.getEvidence(storedDigest) : undefined;
+      if (!stored || !storedDigest || sha256Canonical(stored) !== storedDigest) {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      if (stored.verdict === "FENCE_RELEASE_BLOCKED") {
+        appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", {
+          planHash: request.planHash,
+          verdict: stored.verdict,
+          evidenceDigest: storedDigest,
+          signature: stored.signature,
+          closedAtMs: String(stored.timeline.closedAtMs),
+        });
+        return result(
+          {
+            operationId: request.operationId,
+            planHash: request.planHash,
+            denial: "FENCE_RELEASE_BLOCKED",
+            evidence: stored,
+            driftedDuring: stored.driftedDuring,
+          },
+          false,
+        );
+      }
+      appendEvent(cluster, actor, request.operationId, "EvidenceClosed", {
+        planHash: request.planHash,
+        verdict: stored.verdict,
+        evidenceDigest: storedDigest,
+        signature: stored.signature,
+        closedAtMs: String(stored.timeline.closedAtMs),
+      });
+      return result(
+        {
+          operationId: request.operationId,
+          planHash: request.planHash,
+          denial: stored.verdict === "OK" ? null : (stored.verdict as DenialCode),
+          evidence: stored,
+          driftedDuring: stored.driftedDuring,
+        },
+        false,
+      );
     }
     return result(
       {

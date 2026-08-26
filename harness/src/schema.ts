@@ -4,15 +4,16 @@ import { fileURLToPath } from "node:url";
 import { computeFactsDigest } from "./plan-hash.ts";
 import {
   API_VERSION,
+  APPROVAL_TTL_MS,
   BACKUP_PROOF_KIND,
   JOURNAL_EVENT_TYPES,
   PHASE1_ACTIONS,
-  PHASE1_DESTINATION_PREFIX,
   PHASE1_POLICY,
   PHASE1_RISK,
   PHASE1_STOP,
   SCHEMA_VERSION,
   type ApprovalEnvelope,
+  type ArtifactDestination,
   type BackupProofRequest,
   type EvidenceManifest,
   type JournalEvent,
@@ -70,6 +71,12 @@ function resolve(schema: JsonSchema): JsonSchema {
 
 export function validateSchema(schema: JsonSchema, value: unknown): boolean {
   const resolved = resolve(schema);
+  if (Array.isArray(resolved.type)) {
+    return resolved.type.some((type) => validateSchema({ ...resolved, type }, value));
+  }
+  if (resolved.type === "null") {
+    return value === null;
+  }
   if (resolved.const !== undefined) {
     return value === resolved.const;
   }
@@ -148,6 +155,51 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
+const EVENT_KEYS = ["schemaVersion", "operationId", "sequence", "type", "previousEventDigest", "eventDigest", "payload"] as const;
+
+const PAYLOAD_KEYS: Record<JournalEventType, readonly string[]> = {
+  IntentAccepted: ["planHash", "startedAtMs", "deadlineMs", "factsDigest", "targetDigest"],
+  ApprovalConsumed: ["planHash", "approvalId", "approvalDigest", "approval"],
+  FenceWriteAhead: ["fence"],
+  FenceSet: ["fence"],
+  BackupWriteAhead: ["name"],
+  BackupCreated: ["name", "artifactId", "artifactDigest"],
+  SetBWriteAhead: ["name"],
+  SetBApplied: ["digest"],
+  RestoreWriteAhead: ["name"],
+  RestoreClusterCreated: ["name"],
+  RestoreCreated: ["name"],
+  FenceReleaseWriteAhead: ["fence"],
+  EvidenceStoreWriteAhead: ["evidenceDigest"],
+  EvidenceClosed: ["planHash", "verdict", "evidenceDigest", "signature", "closedAtMs"],
+  FenceReleaseBlocked: ["planHash", "verdict", "evidenceDigest", "signature", "closedAtMs"],
+};
+
+export function admitDestination(value: unknown): ArtifactDestination {
+  if (!isRecord(value)) {
+    throw new Error("SCHEMA");
+  }
+  if (Object.keys(value).some((key) => key !== "bucket" && key !== "objectKey" && key !== "endpoint")) {
+    throw new Error("SCHEMA");
+  }
+  const bucket = value.bucket;
+  const objectKey = value.objectKey;
+  const endpoint = value.endpoint;
+  if (typeof bucket !== "string" || typeof objectKey !== "string" || typeof endpoint !== "string") {
+    throw new Error("SCHEMA");
+  }
+  if (!/^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/.test(bucket) || bucket.includes("..")) {
+    throw new Error("SCHEMA");
+  }
+  if (objectKey.length < 1 || /[@:\s]/.test(objectKey)) {
+    throw new Error("SCHEMA");
+  }
+  if (!/^https:\/\/[A-Za-z0-9._-]+(?::\d+)?(?:\/[A-Za-z0-9._/-]*)?$/.test(endpoint) || endpoint.includes("@")) {
+    throw new Error("SCHEMA");
+  }
+  return { bucket, objectKey, endpoint };
+}
+
 export function admitPlan(value: unknown): PlanDocument {
   const plan = admit<PlanDocument>(PLAN_SCHEMA, value);
   if (plan.target.namespace !== plan.targetNamespace) {
@@ -165,7 +217,8 @@ export function admitPlan(value: unknown): PlanDocument {
   if (!sameStrings(plan.stopConditions, PHASE1_STOP)) {
     throw new Error("SCHEMA");
   }
-  if (!plan.artifactDestination.startsWith(PHASE1_DESTINATION_PREFIX)) {
+  admitDestination(plan.artifactDestination);
+  if (Object.keys(plan.parameters).some((key) => key !== "clusterType")) {
     throw new Error("SCHEMA");
   }
   if (plan.factsDigest !== computeFactsDigest(plan)) {
@@ -176,6 +229,9 @@ export function admitPlan(value: unknown): PlanDocument {
 
 export function admitJournalEvent(value: unknown): JournalEvent {
   if (!isRecord(value)) {
+    throw new Error("SCHEMA");
+  }
+  if (Object.keys(value).some((key) => !EVENT_KEYS.includes(key as (typeof EVENT_KEYS)[number]))) {
     throw new Error("SCHEMA");
   }
   if (value.schemaVersion !== SCHEMA_VERSION) {
@@ -193,25 +249,41 @@ export function admitJournalEvent(value: unknown): JournalEvent {
   if (value.previousEventDigest !== null && (typeof value.previousEventDigest !== "string" || value.previousEventDigest.length < 1)) {
     throw new Error("SCHEMA");
   }
+  if (value.sequence === 1 && value.previousEventDigest !== null) {
+    throw new Error("SCHEMA");
+  }
+  if (value.sequence !== 1 && value.previousEventDigest === null) {
+    throw new Error("SCHEMA");
+  }
   if (typeof value.eventDigest !== "string" || value.eventDigest.length < 1) {
     throw new Error("SCHEMA");
   }
-  if (!isRecord(value.payload)) {
+  const payload = value.payload;
+  if (!isRecord(payload)) {
     throw new Error("SCHEMA");
   }
-  for (const item of Object.values(value.payload)) {
+  const required = PAYLOAD_KEYS[value.type as JournalEventType];
+  const payloadKeys = Object.keys(payload).sort();
+  if (payloadKeys.length !== required.length || required.some((key) => !(key in payload))) {
+    throw new Error("SCHEMA");
+  }
+  for (const item of Object.values(payload)) {
     if (typeof item !== "string" || item.length < 1) {
       throw new Error("SCHEMA");
     }
   }
-  if (value.previousEventDigest !== null && !validateSchema(JOURNAL_EVENT_SCHEMA, value)) {
+  if (!validateSchema(JOURNAL_EVENT_SCHEMA, value)) {
     throw new Error("SCHEMA");
   }
   return value as JournalEvent;
 }
 
 export function admitApproval(value: unknown): ApprovalEnvelope {
-  return admit<ApprovalEnvelope>(APPROVAL_SCHEMA, value);
+  const envelope = admit<ApprovalEnvelope>(APPROVAL_SCHEMA, value);
+  if (envelope.expiresAt - envelope.issuedAt > APPROVAL_TTL_MS || envelope.issuedAt > envelope.expiresAt) {
+    throw new Error("SCHEMA");
+  }
+  return envelope;
 }
 
 export function admitRequest(value: unknown): BackupProofRequest {

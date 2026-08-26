@@ -188,9 +188,11 @@ test("fence release failure is replay-stable and never closes success", () => {
   const keys = makeKeys();
   const first = run(1_000_000, { cluster, keys });
   assert.equal(first.result.denial, "FENCE_RELEASE_BLOCKED");
+  assert.equal(first.result.record.evidence?.verdict, "FENCE_RELEASE_BLOCKED");
   const second = run(1_000_000, { cluster, keys });
   assert.equal(second.result.replayed, true);
   assert.equal(second.result.denial, "FENCE_RELEASE_BLOCKED");
+  assert.deepEqual(second.result.record.evidence, first.result.record.evidence);
 });
 
 test(`${SPEC_P1_JOURNAL_CHAIN} replayed evidence is idempotent`, () => {
@@ -268,6 +270,7 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} crash at each write-ahead and create boundary
     "afterBackupApi",
     "afterRestoreApi",
     "afterSetBApi",
+    "afterEvidenceStore",
   ] as const) {
     const cluster = liveCluster();
     const keys = makeKeys();
@@ -296,7 +299,11 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} closed replay of a different signed plan is B
   const keys = makeKeys();
   const first = run(1_000_000, { cluster, keys });
   assert.equal(first.result.ok, true);
-  const built = makeRequest(1_000_000, keys, makePlan({ artifactDestination: "s3://test-bucket/op-1-other" }));
+  const built = makeRequest(
+    1_000_000,
+    keys,
+    makePlan({ artifactDestination: { bucket: "test-bucket", objectKey: "op-1-other", endpoint: "https://s3.test.invalid" } }),
+  );
   const again = executeBackupProof({
     request: built.request,
     agent: SAFE_AGENT,
@@ -344,7 +351,11 @@ test("unsupported action fake facts destination risk and policy are BLOCKED", ()
   const cases = [
     makePlan({ actions: ["delete-source"] }),
     makePlan({ factsDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }),
-    makePlan({ artifactDestination: "file://tmp/backup" }),
+    makePlan({
+      artifactDestination: { bucket: "test-bucket", objectKey: "op-1", endpoint: "https://user:pass@example.test/b" },
+    }),
+    makePlan({ artifactDestination: { bucket: "", objectKey: "op-1", endpoint: "https://s3.test.invalid" } }),
+    makePlan({ parameters: { clusterType: "group-replication", deleteSource: "true" } }),
     makePlan({ risk: "destructive" }),
     makePlan({ approvalPolicyVersion: "untrusted" }),
   ];
@@ -371,4 +382,3 @@ test("overprivilege extra ConfigMap create is RBAC", () => {
   const { result } = run(1_000_000, { actor: extra });
   assert.equal(result.denial, "RBAC");
 });
-

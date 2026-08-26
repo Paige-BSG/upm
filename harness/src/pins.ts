@@ -89,6 +89,12 @@ export const STARTUP_PINS: readonly StartupPin[] = [
     candidate: "NOASSERTION",
     digest: null,
   },
+  {
+    id: "percona-xtrabackup-spdx",
+    admission: PIN_PENDING,
+    candidate: "NOASSERTION",
+    digest: null,
+  },
 ];
 
 export function integrationPinsReady(pins: readonly StartupPin[] = STARTUP_PINS): boolean {

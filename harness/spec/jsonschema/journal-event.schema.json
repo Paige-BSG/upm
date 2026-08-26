@@ -23,11 +23,12 @@
         "RestoreClusterCreated",
         "RestoreCreated",
         "FenceReleaseWriteAhead",
+        "EvidenceStoreWriteAhead",
         "EvidenceClosed",
         "FenceReleaseBlocked"
       ]
     },
-    "previousEventDigest": { "type": "string" },
+    "previousEventDigest": { "type": ["string", "null"] },
     "eventDigest": { "type": "string", "minLength": 1 },
     "payload": {
       "type": "object",

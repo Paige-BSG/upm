@@ -30,7 +30,8 @@ const NEXT: Record<JournalPhase, readonly JournalEventType[]> = {
   restore_wa: ["RestoreClusterCreated"],
   restore_cluster: ["RestoreCreated"],
   restored: ["FenceReleaseWriteAhead"],
-  fence_rel_wa: ["EvidenceClosed", "FenceReleaseBlocked"],
+  fence_rel_wa: ["EvidenceStoreWriteAhead"],
+  evidence_wa: ["EvidenceClosed", "FenceReleaseBlocked"],
   closed: [],
   fence_blocked: [],
   blocked: [],
@@ -92,6 +93,8 @@ export function reduceJournal(events: JournalEvent[]): JournalPhase {
       phase = "restored";
     } else if (event.type === "FenceReleaseWriteAhead") {
       phase = "fence_rel_wa";
+    } else if (event.type === "EvidenceStoreWriteAhead") {
+      phase = "evidence_wa";
     } else if (event.type === "EvidenceClosed") {
       phase = "closed";
     } else if (event.type === "FenceReleaseBlocked") {
@@ -113,7 +116,11 @@ export function closedVerdict(events: JournalEvent[]): {
     return { denial: null, evidenceDigest: null, signature: null };
   }
   if (closed.type === "FenceReleaseBlocked") {
-    return { denial: "FENCE_RELEASE_BLOCKED", evidenceDigest: null, signature: null };
+    return {
+      denial: "FENCE_RELEASE_BLOCKED",
+      evidenceDigest: closed.payload.evidenceDigest ?? null,
+      signature: closed.payload.signature ?? null,
+    };
   }
   const denial = closed.payload.verdict === "OK" ? null : (closed.payload.verdict as DenialCode);
   return {

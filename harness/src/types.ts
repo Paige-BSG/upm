@@ -30,7 +30,11 @@ export const PHASE1_ACTIONS = ["backup", "isolated-restore"] as const;
 export const PHASE1_RISK = "non-destructive" as const;
 export const PHASE1_POLICY = "v0.2" as const;
 export const PHASE1_STOP = ["unapproved", "drift", "lease-loss"] as const;
-export const PHASE1_DESTINATION_PREFIX = "s3://" as const;
+export type ArtifactDestination = {
+  bucket: string;
+  objectKey: string;
+  endpoint: string;
+};
 
 export const PERCONA_KINDS = [
   "PerconaServerMySQL",
@@ -100,7 +104,7 @@ export type PlanDocument = {
   factsDigest: string;
   actions: readonly string[];
   parameters: Record<string, string>;
-  artifactDestination: string;
+  artifactDestination: ArtifactDestination;
   risk: string;
   timeoutMs: number;
   budget: string;
@@ -156,6 +160,7 @@ export const JOURNAL_EVENT_TYPES = [
   "RestoreClusterCreated",
   "RestoreCreated",
   "FenceReleaseWriteAhead",
+  "EvidenceStoreWriteAhead",
   "EvidenceClosed",
   "FenceReleaseBlocked",
 ] as const;
@@ -176,6 +181,7 @@ export type JournalPhase =
   | "restore_cluster"
   | "restored"
   | "fence_rel_wa"
+  | "evidence_wa"
   | "closed"
   | "fence_blocked"
   | "blocked";
@@ -224,7 +230,7 @@ export type EvidenceManifest = {
   backupArtifactDigest: string;
   observedSchemaDigest: string;
   artifactDigest: string;
-  artifactDestination: string;
+  artifactDestination: ArtifactDestination;
   oracle: {
     schemaDigest: string;
     count: number;

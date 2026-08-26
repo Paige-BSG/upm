@@ -5,7 +5,7 @@ export { FakeK8s } from "./fake-k8s.ts";
 export { generateEd25519, signApproval } from "./signature.ts";
 export { STARTUP_PINS, integrationPinsReady } from "./pins.ts";
 export { setA, setB, evaluateOracle, FIXED_SCHEMA } from "./oracle.ts";
-export { admitRequest, admitPlan, admitApproval, admitEvidence, admitJournalEvent } from "./schema.ts";
+export { admitRequest, admitPlan, admitApproval, admitEvidence, admitJournalEvent, admitDestination } from "./schema.ts";
 export { verifyOffline } from "./verify.ts";
 export { loadInvariantCatalog, requireInvariant } from "./ids.ts";
 export {

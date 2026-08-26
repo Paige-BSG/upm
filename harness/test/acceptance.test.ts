@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { executeBackupProof } from "../src/execute.ts";
+import { eventDigest } from "../src/journal.ts";
 import { backupName } from "../src/names.ts";
 import { evaluateOracle, FIXED_SCHEMA, setA } from "../src/oracle.ts";
+import { STARTUP_PINS } from "../src/pins.ts";
 import { actorMay } from "../src/rbac.ts";
 import { sha256Canonical } from "../src/rfc8785.ts";
-import { admitApproval, admitEvidence, admitRequest } from "../src/schema.ts";
+import { admitApproval, admitEvidence, admitJournalEvent, admitRequest } from "../src/schema.ts";
 import { generateEd25519, signApproval, signCanonical } from "../src/signature.ts";
 import { verifyOffline } from "../src/verify.ts";
 import {
@@ -150,7 +152,14 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} attacker artifact identity after write-ahead 
     resourceVersion: "1",
     annotations: { operationId: "op-1", planHash: first.request.planHash, factsDigest: first.request.plan.factsDigest },
     specDigest: first.request.planHash,
-    spec: { mysqlName: "source-db", destination: "s3://test-bucket/op-1", factsDigest: first.request.plan.factsDigest },
+    spec: {
+      mysqlName: "source-db",
+      destination: sha256Canonical(first.request.plan.artifactDestination),
+      destinationBucket: first.request.plan.artifactDestination.bucket,
+      destinationObjectKey: first.request.plan.artifactDestination.objectKey,
+      destinationEndpoint: first.request.plan.artifactDestination.endpoint,
+      factsDigest: first.request.plan.factsDigest,
+    },
     rows: snapshot,
     observedSchema: { ...FIXED_SCHEMA },
     backupStatus: "Succeeded",
@@ -185,6 +194,26 @@ function resignEvidence(
 ) {
   const { signature: _ignored, ...unsigned } = evidence;
   return { ...unsigned, signature: signCanonical(privateKeyPem, unsigned) };
+}
+
+function reclose(
+  journal: ReturnType<ReturnType<typeof liveCluster>["listJournal"]>,
+  evidence: NonNullable<ReturnType<typeof executeBackupProof>["record"]["evidence"]>,
+  privateKeyPem: string,
+) {
+  const resigned = resignEvidence(evidence, privateKeyPem);
+  const last = journal[journal.length - 1]!;
+  const payload = {
+    ...last.payload,
+    evidenceDigest: sha256Canonical(resigned),
+    signature: resigned.signature,
+  };
+  const unsigned = { ...last, payload };
+  const { eventDigest: _ignored, ...rest } = unsigned;
+  return {
+    evidence: resigned,
+    journal: [...journal.slice(0, -1), { ...unsigned, eventDigest: eventDigest(rest) }],
+  };
 }
 
 test("offline verifier accepts closed evidence and rejects forged journal head", () => {
@@ -267,6 +296,129 @@ test("offline verifier rejects six closure forgeries after resign", () => {
     event.type === "EvidenceClosed" ? { ...event, payload: { ...event.payload, evidenceDigest: "sha256:dead" } } : event,
   );
   assert.equal(verifyOffline({ ...offlineInput(request, evidence, cluster, keys), journal: closedTamper }).ok, false);
+});
+
+test("offline verifier rejects resign-and-reclose field forgeries", () => {
+  const { result, request, keys, cluster } = run(1_000_000);
+  const evidence = result.record.evidence!;
+  const journal = cluster.listJournal(ACTOR);
+  const cases = [
+    { ...evidence, facts: { ...evidence.facts, target: { ...evidence.facts.target, uid: "forged-uid" } } },
+    { ...evidence, effects: { ...evidence.effects, backup: { ...evidence.effects.backup, uid: "forged-backup" } } },
+    { ...evidence, timeline: { ...evidence.timeline, closedAtMs: evidence.timeline.closedAtMs + 1 } },
+    { ...evidence, pins: evidence.pins.map((pin, index) => (index === 0 ? { ...pin, digest: "forged" } : pin)) },
+    {
+      ...evidence,
+      trustIdentity: {
+        ...evidence.trustIdentity,
+        approvalKeyId: "forged-key",
+        approvalSubject: "forged-subject",
+        approvalPolicyVersion: "forged-policy",
+      },
+    },
+    { ...evidence, observedSchemaDigest: "sha256:forged-schema" },
+    { ...evidence, artifactDigest: "sha256:forged-artifact" },
+    { ...evidence, targetPost: { ...evidence.targetPost, uid: "forged-post" } },
+    { ...evidence, factsSnapshotId: "forged-facts" },
+  ];
+  for (const forged of cases) {
+    const closed = reclose(journal, forged, keys.execution.privateKeyPem);
+    assert.equal(
+      verifyOffline({ ...offlineInput(request, closed.evidence, cluster, keys), journal: closed.journal }).ok,
+      false,
+    );
+  }
+});
+
+test("first journal event rejects unknown fields and rewritten intent clock", () => {
+  const { result, request, keys, cluster } = run(1_000_000);
+  const events = cluster.listJournal(ACTOR);
+  assert.throws(() => admitJournalEvent({ ...events[0], extra: true }), /SCHEMA/);
+  const startedAtMs = Number(events[0]!.payload.startedAtMs);
+  const forgedIntent = {
+    ...events[0]!,
+    payload: {
+      ...events[0]!.payload,
+      startedAtMs: String(startedAtMs),
+      deadlineMs: String(startedAtMs + 3_600_000),
+    },
+  };
+  let previous: string | null = null;
+  const rewritten = [forgedIntent, ...events.slice(1)].map((event) => {
+    const next = { ...event, previousEventDigest: previous };
+    const { eventDigest: _ignored, ...unsigned } = next;
+    const digest = eventDigest(unsigned);
+    previous = digest;
+    return { ...next, eventDigest: digest };
+  });
+  const evidence = result.record.evidence!;
+  const closed = reclose(
+    rewritten,
+    {
+      ...evidence,
+      journalRoot: rewritten[0]!.eventDigest,
+      journalHead: rewritten.find((event) => event.type === "EvidenceStoreWriteAhead")!.previousEventDigest!,
+      intent: { ...evidence.intent, deadlineMs: startedAtMs + 3_600_000 },
+      timeline: { ...evidence.timeline, deadlineMs: startedAtMs + 3_600_000 },
+    },
+    keys.execution.privateKeyPem,
+  );
+  assert.equal(
+    verifyOffline({ ...offlineInput(request, closed.evidence, cluster, keys), journal: closed.journal }).ok,
+    false,
+  );
+});
+
+test("two hour approval TTL is BLOCKED", () => {
+  const built = makeRequest(1_000_000);
+  const long = {
+    ...built.request,
+    approval: signApproval(built.keys.approval, {
+      approvalId: "apr-long",
+      planHash: built.request.planHash,
+      approverSubject: "human-approver",
+      issuedAt: 1_000_000,
+      expiresAt: 1_000_000 + 2 * 60 * 60 * 1000,
+      nonce: "nonce-long",
+    }),
+  };
+  const result = executeBackupProof({
+    request: long,
+    agent: SAFE_AGENT,
+    actor: ACTOR,
+    cluster: liveCluster(),
+    keys: built.keys.trusted,
+    nowMs: 1_000_000,
+  });
+  assert.equal(result.denial, "BLOCKED");
+});
+
+test("fence release blocked and drift emit signed failure evidence", () => {
+  const blockedCluster = liveCluster();
+  blockedCluster.failFenceRelease = true;
+  const blockedKeys = makeKeys();
+  const blocked = run(1_000_000, { cluster: blockedCluster, keys: blockedKeys });
+  assert.equal(blocked.result.denial, "FENCE_RELEASE_BLOCKED");
+  assert.equal(blocked.result.record.evidence?.verdict, "FENCE_RELEASE_BLOCKED");
+  const blockedOffline = verifyOffline(
+    offlineInput(blocked.request, blocked.result.record.evidence!, blockedCluster, blockedKeys),
+  );
+  assert.equal(blockedOffline.ok, true);
+  assert.equal(blockedOffline.reason, "FENCE_RELEASE_BLOCKED");
+  const driftCluster = liveCluster();
+  driftCluster.forceDriftAfterBackup = true;
+  const driftKeys = makeKeys();
+  const drift = run(1_000_000, { cluster: driftCluster, keys: driftKeys });
+  assert.equal(drift.result.denial, "TARGET_DRIFTED_DURING_OPERATION");
+  assert.equal(drift.result.record.evidence?.verdict, "TARGET_DRIFTED_DURING_OPERATION");
+  assert.equal(verifyOffline(offlineInput(drift.request, drift.result.record.evidence!, driftCluster, driftKeys)).ok, true);
+});
+
+test("XtraBackup SPDX pin is present and pins match frozen set", () => {
+  assert.ok(STARTUP_PINS.some((pin) => pin.id === "percona-xtrabackup-spdx" && pin.admission === "PENDING"));
+  const { result } = run(1_000_000);
+  assert.equal(result.record.evidence?.pins.length, STARTUP_PINS.length);
+  assert.equal(result.record.evidence?.pinsDigest, sha256Canonical(STARTUP_PINS));
 });
 
 test("evidence schema requires intent facts effects timeline pins and trust", () => {
