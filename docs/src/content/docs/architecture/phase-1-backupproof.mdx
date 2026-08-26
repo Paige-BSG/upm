@@ -82,8 +82,12 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   `target` is an object with the **exact** keys (the identities recorded in `A4`):
 
   ```json
-  ["name","uid","generation","resourceVersion","specDigest"]
+  ["namespace","name","uid","generation","resourceVersion","specDigest"]
   ```
+
+  `target.namespace` **MUST** equal `targetNamespace`: the frozen `TargetRef` includes
+  `namespace`, and the schema admission enforces that equality. A `target` object that omits
+  `namespace` is not a compliant exact key set.
 
   The plan is **not** a free-form blob, and it is **not** satisfied by two different schemas
   that merely name the same semantics: a `PlanDocument` is compliant only if its root key set is
@@ -109,10 +113,11 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
   - the one Kubernetes cluster identity (its `kube-system` namespace **UID**);
   - the **source** namespace **UID** and the **restore** namespace **UID** (two distinct
     namespaces in that same cluster);
-  - the source **target object** identity: its `UID`, `name`, `generation`, `resourceVersion`,
-    and `specDigest` — where `specDigest` is SHA-256 of the target object's **spec as captured
-    in the plan** (the approved spec snapshot), not a claim that the object's spec is
-    immutable (it carries `resourceVersion` and `generation`, both mutable);
+  - the source **target object** identity: its `namespace`, `name`, `UID`, `generation`,
+    `resourceVersion`, and `specDigest` — where `specDigest` is SHA-256 of the target object's
+    **spec as captured in the plan** (the approved spec snapshot), not a claim that the object's
+    spec is immutable (it carries `resourceVersion` and `generation`, both mutable); and
+    `target.namespace` **MUST** equal `targetNamespace` (`A1`);
   - the **restore object** identity: the deterministic `name` (C1) and the expected spec of
     the new MySQL CR created in the restore namespace, which the operation hashes.
 - **A5.** `risk`, `timeoutMs`, `budget`, and `stopConditions` give the per-action and total
@@ -141,11 +146,14 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 ### C. Deterministic create and `AlreadyExists`
 
 - **C1.** Names are deterministic but derived from `operationId`, **not** `planHash`. The frozen
-  rule is: the **journal event name** is `SHA-256(operationId) + "-" + sequence` (`D1`), and the
-  **Percona CR name** is an `operationId`-derived deterministic name. `planHash` is **not** part
-  of any object name — it is bound to the object's **annotations/`spec`** together with
-  `operationId` and `factsDigest`, so re-running the same operation yields the same names while a
-  changed `planHash` on an existing name is detectable from the object rather than the name.
+  rule is: the **journal event name** is `upm-evt-<sha256-32>-<seq6>` (`D1`) — the literal prefix
+  `upm-evt-`, the first 32 lowercase hex characters of `SHA-256(operationId)`, a `-`, and the
+  sequence zero-padded to 6 decimal digits (`000001`, `000002`, …) — and the **Percona CR name**
+  is an `operationId`-derived deterministic name. These are 47-char (8 + 32 + 1 + 6) DNS-1123
+  labels, within the 63-char limit. `planHash` is **not** part of any object name — it is bound
+  to the object's **annotations/`spec`** together with `operationId` and `factsDigest`, so
+  re-running the same operation yields the same names while a changed `planHash` on an existing
+  name is detectable from the object rather than the name.
 - **C2.** On create, if an object with that deterministic name already exists, the
   implementation **MUST** verify the existing object matches what **this operation itself**
   would have created — its **own** full request identity and its **first-observed**
@@ -162,8 +170,9 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 - **D1.** The operation log **SHALL** be an append-only, immutable chain of **events**, each
   stored as a **new ConfigMap with `immutable: true`** under the control-plane ServiceAccount
   (`I2`), so a past event can never be edited. The event ConfigMap **deterministic name** is
-  `SHA-256(operationId) + "-" + sequence`, so re-runs address the same chain and the
-  sequence is monotonic.
+  `upm-evt-<sha256-32>-<seq6>` (see `C1`): `upm-evt-` + the first 32 lowercase hex of
+  `SHA-256(operationId)` + `-` + the sequence zero-padded to 6 decimals (`000001`, …) — a 47-char
+  DNS-1123 label. Re-runs address the same chain and the sequence is monotonic.
 - **D2.** Each event envelope **MUST** carry exactly: `schemaVersion`, `operationId`,
   `sequence`, `type`, `previousEventDigest`, `eventDigest` — plus the event-specific payload.
   The event digests chain each event to the previous one (hash chain). The full closure
@@ -227,10 +236,10 @@ requirements, **MAY** for optional, **SHOULD** for guidance.
 - **F5.** The verifier-recomputed byte representations are **fixed and language-neutral**, so
   a cross-language verifier can recompute them:
   - the **schema digest** is SHA-256 of the **exact UTF-8 bytes** of the schema literal in `F1` —
-    the string `CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL)`
-    verbatim, **including the trailing `;`** and with **no leading whitespace and no trailing
-    newline**. There is no "normalised text" and no `(...)` abbreviation: the digest is over
-    exactly those bytes.
+    the string `CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL);`
+    verbatim — **including the trailing `;`** — with **no leading whitespace and no trailing
+    newline**. The digest is over exactly those bytes; there is no "normalised text" and no
+    `(...)` abbreviation.
   - the **ordered-row SHA** is SHA-256 of the **RFC 8785 canonical serialisation** of the rows
     array `[{"id":1,"payload":"<hex>"}, …]` ordered by `id`, where each `payload` is the
     64-lowercase-hex SHA-256 of the canonical decimal `id`. No implementation-specific
@@ -324,7 +333,7 @@ only as a prose label. `SHALL` conveys a normative requirement.
 | `SPEC-P1-PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 (RFC 8785) covering the exact `A1` plan document field set *and* its actor + the one cluster + two namespace + target/restore object identity bindings. |
 | `SPEC-P1-APPROVAL-ED25519` | B1–B3 | Approval is an Ed25519-signed, single-use envelope with a 15-min validity window; resume across expiry is bound to the journal-persisted same verified signed envelope + canonical digest, never a fresh re-approval. |
 | `SPEC-P1-JOURNAL-CHAIN` | D2–D3 | The journal is a **hash chain**: each event envelope carries `previousEventDigest` and `eventDigest`, chaining every event to the one before it, and effects are journaled in strict write-ahead order (`event → API call → observed/reconciled event`), so evidence continuity across the chain is independently verifiable. |
-| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1, D4–D5 | The journal is **append-only and immutable**: each event is a **new** ConfigMap with `immutable: true` and deterministic name `SHA-256(operationId)` + `-` + sequence (`D1`); growth is documented as unbounded, never compacted or deleted (`D4`); on restart the reconciler only resumes or enters `BLOCKED`, never a fresh or rewound journal (`D5`). |
+| `SPEC-P1-JOURNAL-APPEND-ONLY` | D1, D4–D5 | The journal is **append-only and immutable**: each event is a **new** ConfigMap with `immutable: true` and deterministic name `upm-evt-<sha256-32>-<seq6>` (`D1`, see `C1`); growth is documented as unbounded, never compacted or deleted (`D4`); on restart the reconciler only resumes or enters `BLOCKED`, never a fresh or rewound journal (`D5`). |
 | `SPEC-P1-RESUME-OR-BLOCKED` | D5 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
 | `SPEC-P1-TARGET-FENCE` | E1, E3, E5 | atomic JSON-Patch `test`+`add` fence proving the fence-mutation moment; only-own-fence release (else `FENCE_RELEASE_BLOCKED`); TOCTOU residual risk (`E2`, incl. post-fence target mutation) accepted and documented; both terminal failures emit replay-stable signed failure evidence. |
 | `SPEC-P1-DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
