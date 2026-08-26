@@ -9,7 +9,8 @@ immutable source record under `raw/sources/`.
 > project UPM compares against (not a dependency); and **PRODUCT STACK** — components UPM
 > actually builds on. Product-stack `technologies/` records are brought in as phases land;
 > Phase 1 adds the agent runtime plus the data-plane candidates, which remain
-> `candidate/pending admission` until their pins are confirmed.
+> `candidate/pending admission` until their admission gates close (compatibility, license,
+> and image-digest admission remain open for some).
 
 ## Current records
 

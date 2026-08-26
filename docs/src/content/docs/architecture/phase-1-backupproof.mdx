@@ -48,8 +48,8 @@ The data plane is an external component UPM drives, not UPM source code:
 - **MinIO** — object storage for the backup, used as a replaceable **test** S3, never
   distributed as part of UPM.
 
-The Operator's own images are Go — but that is external software, **not** UPM's source, so
-it is not accurate to write "UPM uses Go". UPM's own code is TypeScript/Node 22.
+The data-plane component images are **external** software — **not** UPM's source — so it is
+not accurate to write "UPM uses Go". UPM's own code is TypeScript/Node 22.
 
 **Pin state.** The operator tag commit, the `ps.percona.com/v1` API and its three kinds,
 the CRD bytes/blob/SHA-256, and the per-architecture image digests for the operator, server,
@@ -61,9 +61,10 @@ classification (SPDX), and the official client-node vs k8s 1.35 pairing. Entries
 
 ## Normative contract
 
-Rules are labelled `PH1-A`, `PH1-B`, … so a reviewer, implementer, or test can cite them.
-Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for requirements,
-**MAY** for optional, **SHOULD** for guidance.
+Rules are labelled `A1`, `B1`, … so a reviewer, implementer, or test can cite them; the
+frozen `SPEC-P1-*` invariant IDs that the code/test contract references are mapped in
+section J. Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for
+requirements, **MAY** for optional, **SHOULD** for guidance.
 
 ### A. Plan, identity, and `planHash`
 
@@ -90,8 +91,11 @@ Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for requireme
 
 ### B. Approval envelope
 
-- **B1.** Approval is a single-use signed envelope **MUST** bind the `actor` (A3), the
-  `planHash` (A2), and a `subject`/`role` pair from the trusted key set (I3).
+- **B1.** Approval is a single-use **Ed25519**-signed envelope (`APPROVAL-ED25519`) that
+  **MUST** bind the `actor` (A3), the `planHash` (A2), and a `subject`/`role` pair. A trusted
+  key maps to a `subject`, and a `subject` is granted one or more `role`s that bound the
+  allowed actions; the envelope is issued for that trusted key→subject→role chain and is
+  only honoured for the `actor` + `planHash` it names.
 - **B2.** An **unsigned** envelope **MUST NOT** be honoured for more than **15 minutes**
   after it was issued; beyond that the envelope is void and must be re-issued.
 - **B3.** The signed envelope is **single-use** (consumed on first use). After it is consumed,
@@ -184,17 +188,34 @@ Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for requireme
 - **I1. Agent surface.** The agent has **no** `bash`, `kubectl`, `kubeconfig`, or database
   admin access. It sees only the typed domain tools the harness exposes. The adapter is a
   thin typed client, never a shell, never cluster-admin.
-- **I2. Control-plane ServiceAccount (`upm-system`).** **MUST** be able to only
-  `create` / `get` / `list` on `configmaps` (the journal) and `leases`
-  (`coordination.k8s.io`). It **MUST NOT** `update` / `patch` / `delete` the journal
-  ConfigMap (the journal is append-only via new revisions), and **MUST NOT** act on any
-  resource outside `upm-system` except as below.
-- **I3. Product ServiceAccount (data plane).** Does **not** get cluster-scoped power. Its
-  RBAC is confined to Percona resources in the **source** and **restore** namespace:
-  `get` / `list` / `watch` / `create` / `update` on `perconaservermysqls`,
-  `perconaservermysqlbackups`, and `perconaservermysqlrestores` (`ps.percona.com/v1`) and
-  the `pods` / status the operator needs. It is **forbidden** from cluster-scoped or other
-  namespaced volume.
+- **I2. Control-plane ServiceAccount (`upm-system`).** Exact RBAC (namespace × resource ×
+  verb):
+
+  | Namespace | Resource | Verbs |
+  |---|---|---|
+  | `upm-system` | `leases` (`coordination.k8s.io`) | `get`, `create`, `update` (or `patch`); **never `delete`** |
+  | `upm-system` | `configmaps` (the journal) | `create`, `get`, `list`; **never `update` / `patch` / `delete`** |
+  | anything else | — | none |
+
+  The Lease needs `update`/`patch` so it can renew every 10s (`LEASE-NOT-SECURITY`); the
+  journal ConfigMap is append-only via new revisions, so it is `create`/`get`/`list` only.
+  It **MUST NOT** act on any resource outside `upm-system`.
+
+- **I3. Product ServiceAccount (data plane).** **Least privilege** — never cluster-scoped.
+  Exact matrix (all Percona resources are `ps.percona.com/v1`):
+
+  | Namespace | Resource | Verbs |
+  |---|---|---|
+  | source | `perconaservermysqls` (the source target) | `get`, `patch` — the latter writes the `resourceVersion` fence (`TARGET-FENCE`) |
+  | source | `perconaservermysqlbackups` | `create`, `get`, `watch` |
+  | restore | `perconaservermysqls` (new MySQL for restore) | `create`, `get`, `watch` |
+  | restore | `perconaservermysqlrestores` | `create`, `get`, `watch` |
+  | any namespace | `pods`, `secrets`, a blanket CR `*` / `update` | **none** — not granted |
+
+  No `pods` / `secrets`, and no blanket CR `update`, is granted. The external operator (not
+  the UPM adapter) holds the Pod permissions; the adapter is granted only what its own real
+  API path needs — fence the source target, create / read / watch the Backup, and create /
+  read / watch the restore target + Restore.
 - **I4. Lease.** The Lease is fixed at **30s** with a **10s** renewal. The Lease only
   reduces contenders; it is **not** a safety mechanism — safety comes from the harness
   contract (approval + fence + drift fail-closed), never from the Lease.
@@ -206,7 +227,28 @@ Normative words carry their RFC-2119 meaning: **MUST** / **SHALL** for requireme
   rationale is written in this Spec, not threaded through source comments.
 - **I6.** Every code/test **invariant ID** referenced in source or tests **MUST** resolve to
   a real invariant defined in this Spec (or in a public acceptance record that accompanies
-  it). No dangling IDs.
+  it). No dangling IDs. The `SPEC-P1-*` family below is the canonical frozen set; every ID
+  resolves to the rule that defines it.
+
+### J. Frozen invariant IDs
+
+Each ID below is a frozen, machine-resolvable identifier the code/test contract references
+(`I6`). `SHALL` conveys a normative requirement.
+
+| Frozen invariant ID | Defined by | Normative meaning |
+|---|---|---|
+| `SCOPE-NONDESTRUCTIVE` | A4, C, Validation | The operation never mutates the source; restore targets an isolated new namespace/cluster with a distinct `kube-system` UID. |
+| `PLANHASH-BINDINGS` | A2–A4 | `planHash` is the canonical SHA-256 covering the plan document (facts/actions/risks/budgets/policy) *and* its actor + object/cluster identity bindings. |
+| `APPROVAL-ED25519` | B1–B3 | Approval is a Ed25519-signed, single-use envelope; unsigned validity ≤ 15 min; the same operation may restart across expiry. |
+| `JOURNAL-CHAIN` / `APPEND-ONLY` | D1–D2 | The journal is an append-only hash-chain ConfigMap; unbounded growth is an acknowledged boundary. |
+| `RESUME-OR-BLOCKED` | D3 | On restart, only resume/reconcile or `BLOCKED`; never a fresh or rewound journal. |
+| `TARGET-FENCE` | E1, E3 | `resourceVersion` fence + only-own-fence release (else `FENCE_RELEASE_BLOCKED`); cross-object TOCTOU residual risk (`E2`) is accepted and documented. |
+| `DRIFT-DURING` | H1 | `TARGET_DRIFTED_DURING_OPERATION` is a real, evidence-backed terminal failure, not "nothing executed". |
+| `ORACLE-AB` | F1–F4 | `backup_proof_items` A/B oracle; restore must yield schema digest, count 1000, id = A, ordered-row SHA = A, and no B rows. |
+| `EVIDENCE-SIGN` | G1–G3 | Evidence signed separately from approval; claim = bytes/integrity + trusted key–source binding; offline closure references approval + journal root/head. |
+| `LEASE-NOT-SECURITY` | I4 | Lease fixed 30s / renew 10s; reduces contention only, never a safety mechanism. |
+| `AGENT-NO-PRIVILEGE` | I1 | The agent has no `bash` / `kubectl` / `kubeconfig` / DB admin access. |
+| `NO-COMMENT` | I5–I6 | Authored source/tests forbid `//`, block/JSDoc comments, `@ts-ignore`/`@ts-expect-error`, and pragmas; a shebang is allowed; every invariant ID resolves. |
 
 ## What "real" validation means here
 

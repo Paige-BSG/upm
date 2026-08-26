@@ -16,7 +16,7 @@ The Percona Server for MySQL operator, non-PXC **group-replication** variant, ta
   `c250d56bab2858128d2828a7774fc6c56252a2ef`, sha256
   `e2a7fef0f5af08d378d8ce49627f062a5c85b6d8e9d6b5b44369a0b8490b8b70`.
 
-### Image set (per-certified manifest; all external Go images, NOT UPM source)
+### Image set (per-certified manifest; external images, NOT UPM source)
 
 - `percona/percona-server-mysql-operator:1.2.0` —
   amd64 `76deed6a6daca2846fba6046b6646e25d22bca2d6d58a0b567e0a2c1240fe103`,
@@ -35,9 +35,9 @@ The Percona Server for MySQL operator, non-PXC **group-replication** variant, ta
 
 - **Candidate, admission pending.** The CRD / API and per-arch image digests are recorded
   first-hand; overall **integration** is still pending (test-machine architecture / compat).
-- The Operator's Go images are **external** software. UPM's own Phase 1 code is TypeScript
-  on Node 22, driving this operator through a narrow `@kubernetes/client-node` adapter — it
-  does **not** make UPM "a Go project."
+- The operator's component images are **external** software, not UPM source. UPM's own
+  Phase 1 code is TypeScript on Node 22, driving this operator through a narrow
+  `@kubernetes/client-node` adapter.
 
 ## Upstream
 

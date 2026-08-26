@@ -20,7 +20,7 @@ CRs and watch status. The agent never receives a kubeconfig or a shell.
 ## Boundaries
 
 - It is UPM's own deterministic-code path (TypeScript on Node 22). The external Percona
-  operator it talks to is **not** UPM source; its Go images do not make UPM a Go project.
+  operator it talks to is **not** UPM source.
 
 ## Upstream
 

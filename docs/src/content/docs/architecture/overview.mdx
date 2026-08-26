@@ -46,8 +46,12 @@ agent acting through a shell.
   approval → backup → isolated restore → evidence loop on these three layers. It is a
   product technical validation, not a release or production high availability.
 - **Security boundaries.** The agent has no `bash`, `kubectl`, `kubeconfig`, or database
-  admin access. The adapter ServiceAccount is scoped to the designated namespace and the
-  Percona CR. Approval is a **signed one-time token bound to `planHash`** that expires
+  admin access. The ServiceAccounts are least-privilege: the control plane gets only
+  `create`/`get`/`list` on the journal ConfigMap and `get`/`create`/`update` on a Lease in
+  `upm-system`; the data-plane adapter gets only `get`/`patch` on the source target,
+  `create`/`get`/`watch` on the Backup, and `create`/`get`/`watch` on the restore target +
+  Restore — never Pods, Secrets, or a blanket CR update. Approval is a **signed one-time
+  token bound to `planHash`** that expires
   after 15 minutes; drift fails closed (`TARGET_DRIFTED_DURING_OPERATION`); `operationId`
   is idempotent; the journal is an immutable hash chain.
 - **Data plane is a candidate.** Phase 1 drives an **external** Percona Server for MySQL
