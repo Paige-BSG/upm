@@ -7,8 +7,11 @@ canonical JSON object whose **filename equals the SHA-256 of its own bytes**.
 
 - A record here is **never mutated**. It is the source-of-truth identity for one external
   resource or open-source component.
-- To record a change, add a **new** record (its bytes differ, so its hash and filename
-  differ) and update `raw/index.json` + `wiki/log.md`.
+- A `sources/<id>/` directory holds the full history: **1..N** immutable records. To
+  record a change, add a **new** record (its bytes differ, so its hash and filename
+  differ) alongside the existing ones; never delete or rewrite an old one.
+- `raw/index.json` points to exactly **one** `current` record per id. Non-current records
+  stay in the directory and are still validated.
 
 ## Record shape
 
@@ -32,13 +35,15 @@ verify against a re-fetch and to avoid embedding a full unlicensed body.
 
 ## Frozen vs dynamic sources
 
-- **Frozen** — a source pinned to a single immutable revision (a fixed commit, tag, gist
-  revision, release). Its record needs no `retrievedAt`; the revision is the identity.
-- **Dynamic** — a page, doc index, service announcement, vendor site, blog post, or
-  anything that can change. Its record **must** carry a timezone-aware `retrievedAt`
-  (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset). An `etag` / `lastModified` from the
-  fetch may be recorded alongside it. The stored digest is for that one retrieval; a
-  later change is re-ingested as a new record (new hash, new filename).
+- **Frozen** — its record carries a machine-verifiable immutable selector (an exact
+  `revision`, `commit`, `tag`, `version`, or `digest` under `reference`, or a top-level
+  `pin`). The revision is the identity, so no `retrievedAt` is required. Decided from the
+  selector, **not** from `kind`.
+- **Dynamic** — no immutable selector, whatever its `kind`. It **must** carry a
+  timezone-aware `retrievedAt` (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset). An
+  `etag` / `lastModified` from the fetch may be recorded alongside it. The stored digest
+  is for that one retrieval; a later change is re-ingested as a new record (new hash,
+  new filename).
 
 ## Validation
 
@@ -48,5 +53,7 @@ modification or deletion of records that existed at that ref.
 
 ## `index.json`
 
-Aggregates `id -> raw/sources/<id>/<sha>.json`. Add a line when you add a record; never
-repoint an id to a modified record of the same revision.
+Aggregates `id -> raw/sources/<id>/<sha>.json` — exactly one **current** record per id.
+Add a line, or repoint an id to the new revision, when you add a record. The index value
+must be a real, validated record in that id's directory; older records stay in the same
+directory as immutable history.

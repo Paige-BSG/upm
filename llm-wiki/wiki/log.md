@@ -47,3 +47,18 @@ the factual OSS / Enterprise boundary without editorializing the vendor's model:
 - Both are dynamic records with a timezone-aware `retrievedAt` and an ETag.
 - `raw/index.json` now anti-forges: keys equal the record-id set exactly, each value is
   `raw/sources/<id>/<sha>.json`, and each record's `id` equals its parent directory name.
+
+## 2026-08-27 refine | Immutable-history + selector-based frozen
+
+Tightened the machine contract after @Sol's update-revision simulation:
+
+- A `raw/sources/<id>/` directory may now hold **1..N immutable records** (history), not
+  one. `raw/index.json` points to exactly one **current** record per id (real file,
+  parent id == dir == key); non-current records are still validated, and `--base`
+  continues to reject delete/modify of anything present at the ref.
+- **Frozen** is no longer a `kind` allowlist. A record is frozen only when it carries a
+  machine-verifiable exact immutable selector (`revision` / `commit` / `tag` / `version` /
+  `digest` under `reference`, or a top-level `pin`). Without one it is dynamic whatever
+  its kind and must carry a timezone-aware `retrievedAt`.
+- Added regression tests: old + new revision with index→new must PASS; deleting the old
+  record (`--base`) must FAIL; a static `kind` with no exact pin must FAIL.

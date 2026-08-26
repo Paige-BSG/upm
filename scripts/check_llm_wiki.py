@@ -3,14 +3,18 @@
 
 Enforces Sol's acceptance rules on `llm-wiki/`:
   - raw records are canonical JSON, content-addressed: filename == SHA-256(bytes);
+  - a record id directory holds an immutable history: **1..N** records, each
+    individually validated; no record is ever deleted or mutated once published;
   - `--base <git-ref>` rejects modifying or deleting a record that existed at that ref
     (only new records, with a new hash/filename, may be added);
-  - every record has the required identity/license/integrity fields, and a dynamic
-    record (any kind not in STATIC_KINDS) carries a timezone-aware `retrievedAt`
-    (an optional `etag` / `lastModified` may accompany it);
-  - `raw/index.json` is anti-forgery: its keys are exactly the record-id set, each
-    value is `raw/sources/<id>/<sha>.json`, and each record's `id` equals its parent
-    directory name;
+  - every record has the required identity/license/integrity fields. A record is
+    **frozen** only if it carries a machine-verifiable immutable selector (an exact
+    revision / commit / tag / version / digest in `reference` or a `pin`). Anything
+    else — whatever its `kind` — is dynamic and MUST carry a timezone-aware
+    `retrievedAt` (an optional `etag` / `lastModified` may accompany it);
+  - `raw/index.json` is anti-forgery and points to exactly ONE **current** record per id:
+    its keys are exactly the record-id set; each value is `raw/sources/<id>/<sha>.json`
+    and every record's `id` equals its parent directory name;
   - `wiki/index.md` + `wiki/log.md` exist and mention every source id;
   - every id has a derived `wiki/sources/<id>.md`;
   - every internal wiki link resolves to a real file under `wiki/`;
@@ -37,11 +41,11 @@ WIKI = LLM_WIKI / "wiki"
 
 REQUIRED = ("id", "kind", "name", "upstream", "reference", "license", "rights",
             "fetched", "integrity")
-# Sources pinned to a single immutable revision do not change; they do not need a
-# timestamp-aware retrievedAt. Everything else (web page, doc index, service/announcement,
-# vendor site, blog post, ...) is dynamic and must record when it was retrieved.
-STATIC_KINDS = {"idea-gist", "source-repo", "package", "license", "api-spec",
-                "spec", "manifest", "release"}
+# A precise, immutable identity — an exact revision/commit/tag/version/digest. Its
+# presence marks a record frozen (no `retrievedAt` required). Its absence marks it
+# dynamic regardless of `kind` (so a page cannot relabel itself as static to bypass
+# the time fingerprint).
+IMMUTABLE_SELECTOR_KEYS = ("revision", "commit", "tag", "version", "digest", "sha", "ref")
 ERRORS: List[str] = []
 
 
@@ -74,6 +78,18 @@ def git_file_at(ref: str, path: str) -> Optional[bytes]:
                                        cwd=str(REPO), stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
         return None
+
+
+def has_immutable_pin(obj) -> bool:
+    """True if the record carries a machine-verifiable exact immutable selector."""
+    for container in (obj.get("reference"), obj.get("pin")):
+        if not isinstance(container, dict):
+            continue
+        for k in IMMUTABLE_SELECTOR_KEYS:
+            v = container.get(k)
+            if isinstance(v, str) and v.strip():
+                return True
+    return False
 
 
 def is_tz_aware_iso(t: str) -> bool:
@@ -127,7 +143,7 @@ def validate_record_file(path: pathlib.Path) -> None:
         err(f"record is not valid JSON: {e}", path)
         return
 
-    # identity: record id must equal its parent directory name (anti-aliasing)
+    # identity: record id must equal its parent directory name
     if obj.get("id") != parent_id:
         err(f"record id '{obj.get('id')}' does not match its directory name '{parent_id}'",
             path)
@@ -147,21 +163,21 @@ def validate_record_file(path: pathlib.Path) -> None:
     if "fetched" in obj and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(obj["fetched"])):
         err(f"fetched is not YYYY-MM-DD: {obj['fetched']!r}", path)
 
-    # frozen vs dynamic: dynamic kinds need a timezone-aware retrievedAt
-    kind = obj.get("kind", "")
-    if kind not in STATIC_KINDS:
-        ra = obj.get("retrievedAt")
+    # frozen vs dynamic: a machine-verifiable immutable pin makes it frozen; otherwise
+    # it is dynamic (whatever its kind) and MUST carry a timezone-aware retrievedAt.
+    frozen = has_immutable_pin(obj)
+    ra = obj.get("retrievedAt")
+    if not frozen:
         if not ra:
-            err(f"dynamic record (kind '{kind}') is missing the timezone-aware"
-                f" 'retrievedAt'", path)
+            err(f"dynamic record (no immutable pin, kind '{obj.get('kind')}') is missing "
+                f"the timezone-aware 'retrievedAt'", path)
         elif not isinstance(ra, str) or not is_tz_aware_iso(ra):
             err(f"record 'retrievedAt' is not a timezone-aware ISO-8601 timestamp: {ra!r}",
                 path)
     else:
-        if "retrievedAt" in obj and (not isinstance(obj["retrievedAt"], str)
-                                     or not is_tz_aware_iso(obj["retrievedAt"])):
-            err(f"record 'retrievedAt' is not a timezone-aware ISO-8601 timestamp: "
-                f"{obj['retrievedAt']!r}", path)
+        if ra is not None and (not isinstance(ra, str) or not is_tz_aware_iso(ra)):
+            err(f"record 'retrievedAt' is not a timezone-aware ISO-8601 timestamp: {ra!r}",
+                path)
 
     integrity = obj.get("integrity", {})
     if not isinstance(integrity, dict) or "sha256" not in integrity:
@@ -210,7 +226,7 @@ def main() -> int:
         if p != REPO / ".git":
             err("nested git repository found", p)
 
-    # --- 1. content-addressed records --------------------------------------------
+    # --- 1. content-addressed records (1..N immutable revisions per id) -----------
     record_files = []
     if RAW_SOURCES.is_dir():
         record_files = sorted(RAW_SOURCES.rglob("*.json"))
@@ -237,13 +253,13 @@ def main() -> int:
                 continue
             base_bytes = git_file_at(base_ref, bpath)
             cur_bytes = cur.read_bytes()
-            # content-addressing ties name to bytes; a same-name file must be identical
             if base_bytes is not None and cur_bytes != base_bytes:
                 err(f"record modified since {base_ref} (should be a new revision): {rel}", None)
 
-    # --- 3. raw/index.json anti-forgery ------------------------------------------
-    # index keys == record-id set exactly (no extra alias, no missing);
-    # each value == raw/sources/<id>/<sha>.json; record id == parent dir == key.
+    # --- 3. raw/index.json anti-forgery + current-record binding -----------------
+    # index keys == record-id set exactly (no extra alias, no missing); each value is
+    # the single CURRENT record for that id: raw/sources/<id>/<sha>.json, parent id ==
+    # dir == key, and it must be a real, validated record in that directory.
     idx_path = LLM_WIKI / "raw" / "index.json"
     if not idx_path.exists():
         err("missing llm-wiki/raw/index.json")
@@ -262,16 +278,25 @@ def main() -> int:
                 err(f"record directory '{i}' exists under raw/sources/ but is missing "
                     f"from raw/index.json", idx_path)
             for i, rel in recs.items():
+                expected_prefix = f"raw/sources/{i}/"
+                if not isinstance(rel, str) or not rel.startswith(expected_prefix):
+                    err(f"raw/index.json path for '{i}' is '{rel}', expected under "
+                        f"'{expected_prefix}'", idx_path)
+                    continue
+                target = LLM_WIKI / rel
+                if not target.is_file():
+                    err(f"raw/index.json points to missing record '{rel}'", idx_path)
+                    continue
+                if target.parent.name != i:
+                    err(f"raw/index.json path parent for '{i}' is '{target.parent.name}'",
+                        idx_path)
                 d = RAW_SOURCES / i
-                fl = sorted(d.glob("*.json")) if d.is_dir() else []
-                actual = f"raw/sources/{i}/{fl[0].name}" if len(fl) == 1 else None
-                if actual is None:
-                    err(f"could not resolve a single record file for id '{i}'", idx_path)
-                elif rel != actual:
-                    err(f"raw/index.json path for '{i}' is '{rel}' but the record is "
-                        f"'{actual}'", idx_path)
-                elif i != d.name:
-                    err(f"raw/index.json key '{i}' does not match its parent dir", idx_path)
+                if d.is_dir() and target not in [x.resolve() for x in d.glob("*.json")]:
+                    err(f"raw/index.json for '{i}' points outside its record directory",
+                        idx_path)
+                if not re.fullmatch(r"[0-9a-f]{64}", target.stem):
+                    err(f"raw/index.json current record for '{i}' is not a 64-hex "
+                        f"{target.stem!r}", idx_path)
         except (json.JSONDecodeError, AttributeError) as e:
             err(f"raw/index.json is not valid JSON/mapping: {e}", idx_path)
 
@@ -311,9 +336,9 @@ def main() -> int:
             print("- " + e)
         return 1
     note = f", --base {base_ref} verified modify/delete unchanged" if base_ref else ""
-    print(f"PASS: check_llm_wiki OK — {len(record_files)} content-addressed record(s), "
-          f"index/log/source in sync, {len(phys_ids)} id(s) anti-forged, wiki links "
-          f"resolve, single git root{note}.")
+    print(f"PASS: check_llm_wiki OK — {len(record_files)} immutable record(s) across "
+          f"{len(phys_ids)} id(s), index current-record binding OK, index/log/source in "
+          f"sync, wiki links resolve, single git root{note}.")
     return 0
 
 

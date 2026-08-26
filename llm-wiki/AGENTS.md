@@ -53,22 +53,29 @@ unsourced claims, dead links, and manifest/lockfile pins that disagree.
 ## Content addressing rules
 
 - A raw record is **immutable**. Do not modify or delete it.
-- A change to the same upstream identity is a **new record** (new file name, because the
-  content and its hash differ) and a new entry in `index.json` + `log.md`.
+- A `raw/sources/<id>/` directory holds the full history: **1..N** immutable records. A
+  change to the same upstream identity is a **new record** (new file name, because the
+  content and its hash differ), added alongside the old ones. Nothing already in the
+  directory is touched.
+- `raw/index.json` points to exactly **one** `current` record per id. Its value must be
+  `raw/sources/<id>/<sha>.json`, the file must exist, and the record's `id` must equal its
+  parent directory name. Historical (non-current) records remain in the directory and are
+  still validated individually.
 - `scripts/check_llm_wiki.py` recomputes every record's filename from its bytes. Run it
   with `--base <git-ref>` to verify that no existing record (present at that ref) was
   modified or deleted — only new records may be added.
 
 ## Frozen vs dynamic sources
 
-A source pinned to a single immutable revision (a fixed commit, tag, gist revision,
-release) is **frozen** — set `kind` to one of `idea-gist`, `source-repo`, `package`,
-`license`, `api-spec`, `spec`, `manifest`, `release`, and no `retrievedAt` is required.
+A record is **frozen** only when it carries a **machine-verifiable immutable selector**:
+an exact `revision`, `commit`, `tag`, `version`, or `digest` under `reference` (or a
+top-level `pin`). That exact value is the identity, and no `retrievedAt` is required.
 
-Anything else (web page, doc index, service announcement, vendor site, blog post) is
-**dynamic** and must record a timezone-aware `retrievedAt` (ISO-8601 with `Z` or a
-`±HH:MM`/`±HHMM` offset) plus an optional `etag` / `lastModified`. `scripts/check_llm_wiki.py`
-enforces this per `kind`.
+Anything without such a pin is **dynamic**, whatever its `kind`. It must record a
+timezone-aware `retrievedAt` (ISO-8601 with `Z` or a `±HH:MM`/`±HHMM` offset) plus an
+optional `etag` / `lastModified`. `scripts/check_llm_wiki.py` decides frozen vs dynamic
+from the selector, not from `kind`; a static-looking `kind` with no pin is treated as
+dynamic and forced to carry `retrievedAt`.
 
 ## License / rights rule
 
