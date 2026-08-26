@@ -1,0 +1,43 @@
+---
+title: Getting started
+description: Clone the repository and build the documentation site.
+---
+
+This repository hosts the project's public documentation and the agent LLM wiki. The
+only thing to build today (no product code yet) is the docs site.
+
+## Clone
+
+```bash
+git clone https://github.com/Paige-BSG/upm
+cd upm
+```
+
+## Build the docs site
+
+From `docs/`:
+
+```bash
+pnpm install
+pnpm run build      # static site + /llms.txt + /llms-full.txt + per-page .md in dist/
+pnpm run typecheck  # astro check
+pnpm run lint:docs  # nimbus-docs lint
+```
+
+Install Node.js ≥ 22.12 and Corepack/pnpm before running the above.
+
+## Validate the LLM wiki
+
+From the repo root:
+
+```bash
+python3 scripts/check_llm_wiki.py .
+```
+
+This validates the content-addressed raw records in `llm-wiki/`, the `--base` guard
+that refuses to modify or delete an existing record, and the index/log/link/source
+invariants.
+
+## Next
+
+Read the [contribution guide](/contributing/workflow) before making a change.

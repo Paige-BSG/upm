@@ -1,45 +1,29 @@
 ---
 title: UPM
-description: The LLM wiki — a pinned, license-aware library for every external resource and open-source component UPM's repositories reference.
+description: Public documentation for the UPM open-source project — a Kubernetes database and middleware management system.
 ---
 
-UPM documents each external resource and open-source component its repositories
-reference using the **LLM wiki** knowledge-management paradigm Andrej Karpathy proposed
-in April 2026: an LLM compiles and maintains a persistent, interlinked Markdown library
-that compounds over time, instead of you re-reading a source on every query.
+This is the public documentation for **UPM**, an open-source project to manage
+databases and middleware on Kubernetes. Use the left navigation to read about the
+project's intent, its current status, and how it is architected, or jump to the
+[contribution guide](/contributing/workflow) to get involved.
 
-`docs/src/content/docs/` is that library and, at the same time, the Nimbus content tree —
-one directory is both the human/agent-readable wiki and the source for the built site.
+> Status: the public repository currently holds this documentation and the agent LLM
+> wiki, but **not yet product source code**. Product code is being refactored and
+> released; treat the architecture and roadmap pages as the intended direction, not a
+> description of a shipped product.
 
-## Reading route
+## Contents
 
-- `sources/` — immutable source records: upstream URL, exact tag / commit / digest,
-  fetched date, and license or rights boundary.
-- `components/` — executable or distributable dependencies we use (libraries, tools,
-  models, fonts).
-- `resources/` — external knowledge we rely on (specs, documentation sites, services,
-  papers).
-- `concepts/` — recurring concepts and paradigms.
-- `log.md` — append-only ingest / query / lint timeline.
+- [Introduction](/introduction/what-is-upm) — what UPM is and why.
+- [Status](/introduction/status) — what exists today and what is coming.
+- [Architecture](/architecture/overview) — the intended design.
+- [Reference](/reference/related-projects) — the upstream project and the comparison
+  baseline.
+- [Contributing](/contributing/workflow) — how to propose a change.
+- [Security](/security/reporting) — how to report a vulnerability.
 
-## Current records
+## Cross-tool entry
 
-The initial three ingests:
-
-- [`sources/nimbus-docs`](/sources/nimbus-docs) — the framework UPM's wiki site is built on
-  (republished as [`components/nimbus-docs`](/components/nimbus-docs)).
-- [`sources/karpathy-llm-wiki`](/sources/karpathy-llm-wiki) — the knowledge-management
-  paradigm UPM follows (republished as [`concepts/karpathy-llm-wiki`](/concepts/karpathy-llm-wiki)).
-- [`sources/google-code-wiki`](/sources/google-code-wiki) — auxiliary understanding layer
-  for public GitHub repos (republished as [`resources/google-code-wiki`](/resources/google-code-wiki)).
-
-## Contract
-
-The repo-root `AGENTS.md` defines the three operations (ingest / query / lint) and the
-admission contract for external resources. Every claim in this wiki traces to a source
-record under `sources/`; a version change never rewrites history, it adds a revision.
-
-## Ownership
-
-- Owner: `@DeepSeek`
-- Last verified: 2026-08-27
+Serving humans is the primary use of this site, but it is also agent-friendly: the
+built site exposes `/llms.txt`, `/llms-full.txt`, and a per-page markdown alternate.

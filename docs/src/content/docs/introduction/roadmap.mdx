@@ -1,0 +1,29 @@
+---
+title: Roadmap
+description: The short-term goal for UPM and how the project gets there.
+---
+
+The **short-term goal** is a thorough refactor of [upmio](https://github.com/upmio),
+released as open source. The refactor is a rebuild, not a branch fork; earlier
+open-source work is reference material only.
+
+## Phases
+
+1. **Public skeleton** — establish the public documentation and the agent LLM wiki, and
+   lay down the branch/pull-request contract. This is what exists today.
+2. **Knowledge base** — ingest the external resources and open-source components the
+   product references (operators, package charts, datastore engines) into `llm-wiki/`,
+   each pinned and license-aware.
+3. **Product code** — release the refactored managers (unit, compose, packages) into
+   the public repository, with the project docs describing them accurately.
+4. **Automation** — add product-code gates and wire the existing checks into CI once
+   there is code to test.
+
+## Principles
+
+- **Open first** — core capabilities are not paywalled. The comparison baseline is
+  KubeBlocks, whose advanced features are paid; UPM keeps its fundamentals open.
+- **Truthful** — pages describe what exists, not an imagined shipped product.
+- **Public-safety rule** — source, docs, decisions, and release evidence are public;
+  credentials, customer data, internal conversations, and undisclosed commercial
+  information never enter the repo.

@@ -1,10 +1,11 @@
 # This Nimbus docs site
 
-> **This site is UPM's LLM wiki.** The content contract — three operations
-> (ingest / query / lint) and the external-resource admission rule — lives in the
-> repo root `../AGENTS.md`. `docs/src/content/docs/` is simultaneously the wiki and
-> this Nimbus content tree. Follow the repo-root `AGENTS.md` for what to add, and
-> this file for how to author it.
+> **This site is UPM's public project documentation**, not the LLM wiki. It is the
+> human-first documentation for the UPM product. The repo root `../AGENTS.md` is the
+> entry router; the separate **agent LLM wiki** lives in `../llm-wiki/` (follow
+> `../llm-wiki/AGENTS.md` for its ingest/query/lint rules, and this file only for how
+> to author this docs site). Documentation here describes the product truthfully —
+> it does not pretend a shipped artifact exists.
 
 Astro-based docs. The `nimbus-docs` package handles content schemas, sidebar/TOC, MDX→markdown, build hooks, and the `nimbus` CLI. Everything in `src/` is yours to edit.
 

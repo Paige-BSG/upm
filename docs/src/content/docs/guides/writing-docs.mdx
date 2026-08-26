@@ -1,0 +1,49 @@
+---
+title: Writing the docs
+description: How to author a page on this Nimbus docs site.
+---
+
+This site is built with Cloudflare Nimbus. A page is an `.mdx` file under
+`src/content/docs/`; the directory nesting is the URL and the sidebar order.
+
+## Page frontmatter
+
+`title` is required. It becomes the page's `<h1>`, so do not repeat it in the body.
+
+```mdx
+---
+title: My page
+description: One-line summary.
+---
+
+Body here.
+```
+
+## Where a page goes
+
+The tree below mirrors the sidebar:
+
+- `introduction/` — what the project is, its status and roadmap.
+- `guides/` — how to do something.
+- `architecture/` — the intended design.
+- `reference/` — related projects and facts.
+- `contributing/` — contribution workflow.
+- `security/` — security reporting.
+
+## Authoring rules
+
+- Use standard Markdown; Nimbus renders MDX.
+- Every file is in the `docs` content collection; frontmatter validates against
+  `nimbus-docs/schemas`.
+- Prefer a component from `src/components.ts` (registered) if you need one. Icons use
+  `astro-icon` + Phosphor.
+- Don't remove `<AgentDirective />` from `BaseLayout.astro` — it points agents at
+  `/llms.txt`.
+
+## Check your page
+
+From `docs/`:
+
+- `pnpm exec nimbus-docs check` — build-free preflight.
+- `pnpm run build` then `pnpm run lint:docs` — full build + internal-link lint (the
+  link check needs a prior build to know routes).

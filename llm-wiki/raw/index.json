@@ -1,0 +1,8 @@
+{
+  "records": {
+    "google-code-wiki": "raw/sources/google-code-wiki/529b606b7d708e2bbf5a96699f0a8dcab38aafd5dd5df56fb25ed34c475b6d69.json",
+    "karpathy-llm-wiki": "raw/sources/karpathy-llm-wiki/acd3dfdf772c585c5bd0d88e0ffe2f2840e7e17870ce7fe32fc84ac24d97ccc8.json",
+    "nimbus-docs": "raw/sources/nimbus-docs/43d4c809ead73db9a8277fe2616ca701f5e85a30dc665036876bad90716192af.json"
+  },
+  "schema": 1
+}

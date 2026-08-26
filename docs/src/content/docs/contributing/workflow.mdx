@@ -1,0 +1,32 @@
+---
+title: Contributing
+description: How to propose and land a change in the UPM repository.
+---
+
+Changes to UPM land through a short branch and a pull request. The full rules are in the
+repo-root `CONTRIBUTING.md`; this page is the summary.
+
+## Workflow
+
+1. Create a short feature branch off `main`.
+2. Make a focused change. One branch = one logical change.
+3. Run the checks that exist today:
+   - `python3 scripts/check_llm_wiki.py .` from the root.
+   - `pnpm run build`, `pnpm run typecheck`, `pnpm run lint:docs` from `docs/`.
+   - A secret scan — the repo never contains a credential.
+4. Open a pull request against `main`.
+5. Wait for an independent review before merge. The author cannot approve their own
+   change; a different person or agent must say GO. Resolve all conversation first.
+
+## Merge policy
+
+- Squash-merge; one pull request becomes one clear commit on `main`.
+- The short branch is deleted on merge.
+- No direct push to `main`, no force-push, no deleting `main`; linear history.
+- No long-lived `develop` branch.
+- Releases are immutable `v*` tags from checked-in commits on `main`.
+
+## Public-safety rule
+
+Put source, docs, decisions, and release evidence in the repo. Never put credentials,
+customer data, internal conversations, or undisclosed commercial information in it.

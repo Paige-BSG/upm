@@ -1,0 +1,29 @@
+---
+title: Status
+description: What exists in this repository today, and what is still to come.
+---
+
+This repository is the **public home** for UPM. It is early-stage: the product source
+code is still being refactored upstream and has not been released into this repository
+yet.
+
+## What exists today
+
+- **Public documentation** — this site (`docs/`), built with Cloudflare Nimbus. It
+  serves humans at `/` and is agent-readable via `/llms.txt` and per-page `.md`.
+- **An agent LLM wiki** (`llm-wiki/`) — a Karpathy-style, pinned, license-aware
+  knowledge base of the external resources and open-source components the project
+  references. This is for channel agents, not a public site.
+- **Repository governance** — `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`,
+  and a branch-and-pull-request contract.
+- **A license** — Apache-2.0.
+
+## What is still to come
+
+- Product source code, released as the refactor proceeds.
+- Automated gates once code exists (lint, unit, integration, build) and the existing
+  docs/wiki/secret checks wired into Actions.
+
+We deliberately do not pretend a usable product exists yet. Pages describing the
+architecture and the roadmap are the intended direction, not a description of a shipped
+artifact.

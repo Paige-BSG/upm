@@ -1,0 +1,34 @@
+---
+title: What is UPM?
+description: UPM is an open-source project to manage databases and middleware on Kubernetes.
+---
+
+UPM is an **open-source** project to manage **databases and middleware** on Kubernetes.
+It aims to give operators a single, declarative way to run and operate stateful data
+infrastructure — provisioning, lifecycle, and upgrades — instead of hand-rolling
+scripts per engine.
+
+## Why it exists
+
+Our company already ships a product for this ([upmio](https://github.com/upmio)). UPM is
+a **thorough refactor** of that product, released as open source, not a fork of a
+branch. The earlier open-source codebase is used as reference material only.
+
+We see the industry moving toward a more open model. A well-known competitor,
+[KubeBlocks](https://github.com/apecloud/kubeblocks), gates its advanced features
+behind a paid tier, which we believe goes against the open-source spirit. UPM is our
+alternative: the core capabilities are open, with no paywall around the fundamental
+features.
+
+## What it manages
+
+- Databases — e.g. MySQL, PostgreSQL style engines.
+- Middleware — e.g. Redis, Kafka.
+- The lifecycle around them — provisioning, configuration, scaling, and upgrades.
+
+## Getting precise information
+
+The highest-value, most up-to-date technical detail for agents is in the
+separate LLM wiki (`llm-wiki/` in this repository), which pins and describes the
+external resources the project references. This documentation site gives the
+human-facing overview.
