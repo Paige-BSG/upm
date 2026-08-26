@@ -42,6 +42,7 @@ export type CrObject = {
   backupStatus?: string;
   artifactId?: string;
   artifactDigest?: string;
+  artifactBytes?: string;
   event?: JournalEvent;
   leaseHolder?: string;
   leaseUntil?: number;

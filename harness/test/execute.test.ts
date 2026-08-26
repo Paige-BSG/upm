@@ -238,8 +238,15 @@ test("integration pins stay closed until MinIO SPDX and client compat admit", ()
 });
 
 test("timeout budget is enforced", () => {
-  const { result } = run(1_000_000, { startedAtMs: 1_000_000 - 120_000 });
+  const cluster = liveCluster();
+  cluster.apiElapsedMs = 70_000;
+  const { result } = run(1_000_000, { cluster });
   assert.equal(result.denial, "TIMEOUT");
+});
+
+test("caller future startedAt is BLOCKED", () => {
+  const { result } = run(1_000_000, { startedAtMs: 1_000_000 + 3_600_000 });
+  assert.equal(result.denial, "BLOCKED");
 });
 
 test("unknown request field is rejected", () => {
@@ -271,6 +278,7 @@ test(`${SPEC_P1_RESUME_OR_BLOCKED} crash at each write-ahead and create boundary
     "afterRestoreApi",
     "afterSetBApi",
     "afterEvidenceStore",
+    "afterEvidenceStoreWa",
   ] as const) {
     const cluster = liveCluster();
     const keys = makeKeys();

@@ -159,7 +159,7 @@ const EVENT_KEYS = ["schemaVersion", "operationId", "sequence", "type", "previou
 
 const PAYLOAD_KEYS: Record<JournalEventType, readonly string[]> = {
   IntentAccepted: ["planHash", "startedAtMs", "deadlineMs", "factsDigest", "targetDigest"],
-  ApprovalConsumed: ["planHash", "approvalId", "approvalDigest", "approval"],
+  ApprovalConsumed: ["planHash", "approvalId", "approvalDigest", "approval", "consumedAt"],
   FenceWriteAhead: ["fence"],
   FenceSet: ["fence"],
   BackupWriteAhead: ["name"],
@@ -170,7 +170,7 @@ const PAYLOAD_KEYS: Record<JournalEventType, readonly string[]> = {
   RestoreClusterCreated: ["name"],
   RestoreCreated: ["name"],
   FenceReleaseWriteAhead: ["fence"],
-  EvidenceStoreWriteAhead: ["evidenceDigest"],
+  EvidenceStoreWriteAhead: ["evidenceDigest", "closedAtMs", "verdict", "driftedDuring"],
   EvidenceClosed: ["planHash", "verdict", "evidenceDigest", "signature", "closedAtMs"],
   FenceReleaseBlocked: ["planHash", "verdict", "evidenceDigest", "signature", "closedAtMs"],
 };

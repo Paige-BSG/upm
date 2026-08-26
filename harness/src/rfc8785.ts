@@ -90,3 +90,7 @@ export function canonicalize(value: unknown): string {
 export function sha256Canonical(value: unknown): string {
   return `sha256:${createHash("sha256").update(canonicalize(value), "utf8").digest("hex")}`;
 }
+
+export function sha256Utf8(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}

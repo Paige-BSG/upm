@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { sha256Canonical } from "./rfc8785.ts";
-import { SPEC_P1_ORACLE_AB } from "./types.ts";
+import { sha256Canonical, sha256Utf8 } from "./rfc8785.ts";
+import { SPEC_P1_ORACLE_AB, type ArtifactDestination } from "./types.ts";
 
 void SPEC_P1_ORACLE_AB;
 
 export type OracleRow = { id: number; payload: string };
+
+export const SCHEMA_LITERAL =
+  "CREATE TABLE backup_proof_items (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL);";
+
+export const SCHEMA_DIGEST = sha256Utf8(SCHEMA_LITERAL);
 
 export const FIXED_SCHEMA = {
   table: "backup_proof_items",
@@ -12,7 +17,7 @@ export const FIXED_SCHEMA = {
 } as const;
 
 export function rowPayload(id: number): string {
-  return createHash("sha256").update(`backup_proof_items:${id}`, "utf8").digest("hex");
+  return createHash("sha256").update(String(id), "utf8").digest("hex");
 }
 
 export function setA(): OracleRow[] {
@@ -31,6 +36,18 @@ export function setB(): OracleRow[] {
 
 export function orderedRowHash(rows: OracleRow[]): string {
   return sha256Canonical([...rows].sort((left, right) => left.id - right.id));
+}
+
+export function encodeBackupArtifact(destination: ArtifactDestination, rows: OracleRow[]): string {
+  return [
+    "xtrabackup-backup-v1",
+    sha256Canonical(destination),
+    ...[...rows].sort((left, right) => left.id - right.id).map((row) => `${row.id}=${row.payload}`),
+  ].join("\n");
+}
+
+export function artifactDigestOf(bytes: string): string {
+  return sha256Utf8(bytes);
 }
 
 export function schemaMatchesFixed(observedSchema: Record<string, string> | undefined): boolean {
@@ -65,7 +82,7 @@ export function evaluateOracle(
     orderedRowHash(rows) === orderedRowHash(expected) &&
     setBAbsent;
   return {
-    schemaDigest: observedSchema ? sha256Canonical(observedSchema) : "",
+    schemaDigest: schemaOk ? SCHEMA_DIGEST : "",
     count: rows.length,
     primaryKeyMin: ids[0] ?? 0,
     primaryKeyMax: ids[ids.length - 1] ?? 0,

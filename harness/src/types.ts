@@ -30,6 +30,7 @@ export const PHASE1_ACTIONS = ["backup", "isolated-restore"] as const;
 export const PHASE1_RISK = "non-destructive" as const;
 export const PHASE1_POLICY = "v0.2" as const;
 export const PHASE1_STOP = ["unapproved", "drift", "lease-loss"] as const;
+export const PHASE1_VERDICTS = ["OK", "TARGET_DRIFTED_DURING_OPERATION", "FENCE_RELEASE_BLOCKED"] as const;
 export type ArtifactDestination = {
   bucket: string;
   objectKey: string;

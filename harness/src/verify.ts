@@ -1,18 +1,26 @@
 import { reduceJournal, replayJournal } from "./journal.ts";
-import { evaluateOracle, FIXED_SCHEMA, setA } from "./oracle.ts";
+import { backupName, restoreClusterName, restoreName } from "./names.ts";
+import { artifactDigestOf, evaluateOracle, FIXED_SCHEMA, SCHEMA_DIGEST, setA, setB } from "./oracle.ts";
 import { computeFactsDigest, planHash } from "./plan-hash.ts";
 import { STARTUP_PINS } from "./pins.ts";
 import { sha256Canonical } from "./rfc8785.ts";
-import { backupName } from "./names.ts";
 import { admitDestination, admitEvidence, admitJournalEvent, admitRequest } from "./schema.ts";
 import { verifyCanonical } from "./signature.ts";
-import { APPROVAL_TTL_MS, type ApprovalEnvelope, type EvidenceManifest, type JournalEvent, type TrustedApproval } from "./types.ts";
+import {
+  APPROVAL_TTL_MS,
+  PHASE1_VERDICTS,
+  type ApprovalEnvelope,
+  type EvidenceManifest,
+  type JournalEvent,
+  type TrustedApproval,
+} from "./types.ts";
 
 export type OfflineVerifyInput = {
   request: unknown;
   evidence: unknown;
   journal: unknown;
   artifactRows: unknown;
+  artifactBytes: unknown;
   keys: {
     approval: Record<string, TrustedApproval>;
     execution: { keyId: string; publicKeyPem: string };
@@ -63,6 +71,10 @@ function evidencePins() {
   }));
 }
 
+function payloadOf(events: JournalEvent[], type: JournalEvent["type"]): Record<string, string> | undefined {
+  return events.find((event) => event.type === type)?.payload;
+}
+
 export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
   try {
     const request = admitRequest(input.request);
@@ -101,7 +113,19 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     ) {
       return fail("BLOCKED");
     }
-    if (!sameJson(request.plan.target, evidence.facts.target) || evidence.facts.clusterUid !== request.plan.clusterUid) {
+    if (
+      !sameJson(request.plan.target, evidence.facts.target) ||
+      evidence.facts.clusterUid !== request.plan.clusterUid ||
+      evidence.facts.targetNamespaceUid !== request.plan.targetNamespaceUid ||
+      evidence.facts.restoreNamespaceUid !== request.plan.restoreNamespaceUid
+    ) {
+      return fail("BLOCKED");
+    }
+    if (
+      evidence.intent.operationId !== request.operationId ||
+      evidence.intent.planHash !== request.planHash ||
+      evidence.intent.factsDigest !== request.plan.factsDigest
+    ) {
       return fail("BLOCKED");
     }
     if (
@@ -115,6 +139,9 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
       return fail("BLOCKED");
     }
     if (events.some((event) => event.operationId !== request.operationId)) {
+      return fail("BLOCKED");
+    }
+    if (!(PHASE1_VERDICTS as readonly string[]).includes(evidence.verdict)) {
       return fail("BLOCKED");
     }
     const intent = events[0];
@@ -141,7 +168,8 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
       return fail("UNAPPROVED");
     }
     const approvalText = consumed.payload.approval;
-    if (!approvalText) {
+    const consumedAt = Number(consumed.payload.consumedAt);
+    if (!approvalText || !Number.isFinite(consumedAt)) {
       return fail("UNAPPROVED");
     }
     const storedApproval = JSON.parse(approvalText) as ApprovalEnvelope;
@@ -150,7 +178,11 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     }
     if (
       evidence.approval.expiresAt - evidence.approval.issuedAt > APPROVAL_TTL_MS ||
-      evidence.approval.issuedAt > evidence.approval.expiresAt
+      evidence.approval.issuedAt > evidence.approval.expiresAt ||
+      consumedAt < evidence.approval.issuedAt ||
+      consumedAt > evidence.approval.expiresAt ||
+      Number(intent.payload.startedAtMs) > consumedAt ||
+      evidence.timeline.closedAtMs < consumedAt
     ) {
       return fail("UNAPPROVED");
     }
@@ -184,13 +216,19 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     if (Number(terminal.payload.closedAtMs) !== evidence.timeline.closedAtMs) {
       return fail("BLOCKED");
     }
-    if (evidence.timeline.closedAtMs < evidence.timeline.startedAtMs) {
+    if (
+      evidence.timeline.closedAtMs < evidence.timeline.startedAtMs ||
+      evidence.timeline.closedAtMs > evidence.timeline.deadlineMs
+    ) {
       return fail("BLOCKED");
     }
     if (phase === "fence_blocked" && (terminal.type !== "FenceReleaseBlocked" || evidence.verdict !== "FENCE_RELEASE_BLOCKED")) {
       return fail("BLOCKED");
     }
-    if (phase === "closed" && terminal.type !== "EvidenceClosed") {
+    if (phase === "closed" && (terminal.type !== "EvidenceClosed" || evidence.verdict === "FENCE_RELEASE_BLOCKED")) {
+      return fail("BLOCKED");
+    }
+    if (terminal.type === "FenceReleaseBlocked" && evidence.verdict !== "FENCE_RELEASE_BLOCKED") {
       return fail("BLOCKED");
     }
     if (evidence.verdict === "OK" && evidence.driftedDuring) {
@@ -199,10 +237,22 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     if (evidence.verdict === "TARGET_DRIFTED_DURING_OPERATION" && !evidence.driftedDuring) {
       return fail("BLOCKED");
     }
-    if (evidence.verdict === "OK" && evidence.targetPost.uid !== evidence.targetPre.uid) {
+    if (
+      (evidence.verdict === "OK" || (evidence.verdict === "FENCE_RELEASE_BLOCKED" && !evidence.driftedDuring)) &&
+      (evidence.targetPost.uid !== evidence.targetPre.uid ||
+        evidence.targetPost.generation !== evidence.targetPre.generation ||
+        evidence.targetPost.specDigest !== evidence.targetPre.specDigest ||
+        evidence.targetPost.name !== evidence.targetPre.name ||
+        evidence.targetPost.namespace !== evidence.targetPre.namespace)
+    ) {
       return fail("BLOCKED");
     }
-    if (evidence.verdict === "TARGET_DRIFTED_DURING_OPERATION" && evidence.targetPost.uid === evidence.targetPre.uid && evidence.targetPost.generation === evidence.targetPre.generation && evidence.targetPost.specDigest === evidence.targetPre.specDigest) {
+    if (
+      evidence.verdict === "TARGET_DRIFTED_DURING_OPERATION" &&
+      evidence.targetPost.uid === evidence.targetPre.uid &&
+      evidence.targetPost.generation === evidence.targetPre.generation &&
+      evidence.targetPost.specDigest === evidence.targetPre.specDigest
+    ) {
       return fail("BLOCKED");
     }
     if (intent.eventDigest !== evidence.journalRoot) {
@@ -212,19 +262,66 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     if (
       !store ||
       store.payload.evidenceDigest !== terminal.payload.evidenceDigest ||
-      store.previousEventDigest !== evidence.journalHead
+      store.previousEventDigest !== evidence.journalHead ||
+      store.payload.verdict !== evidence.verdict ||
+      store.payload.closedAtMs !== String(evidence.timeline.closedAtMs) ||
+      store.payload.driftedDuring !== (evidence.driftedDuring ? "true" : "false")
+    ) {
+      return fail("BLOCKED");
+    }
+    const fence = `${request.operationId}:${request.planHash}`;
+    const expectedBackup = backupName(request.operationId);
+    const expectedRestore = restoreName(request.operationId);
+    const expectedCluster = restoreClusterName(request.operationId);
+    if (
+      payloadOf(events, "FenceWriteAhead")?.fence !== fence ||
+      payloadOf(events, "FenceSet")?.fence !== fence ||
+      payloadOf(events, "FenceReleaseWriteAhead")?.fence !== fence
+    ) {
+      return fail("BLOCKED");
+    }
+    if (
+      payloadOf(events, "BackupWriteAhead")?.name !== expectedBackup ||
+      payloadOf(events, "SetBWriteAhead")?.name !== request.plan.target.name ||
+      payloadOf(events, "SetBApplied")?.digest !== sha256Canonical(setB()) ||
+      payloadOf(events, "RestoreWriteAhead")?.name !== expectedRestore ||
+      payloadOf(events, "RestoreClusterCreated")?.name !== expectedCluster ||
+      payloadOf(events, "RestoreCreated")?.name !== expectedRestore
     ) {
       return fail("BLOCKED");
     }
     const backup = events.find((event) => event.type === "BackupCreated");
-    const expectedBackup = backupName(request.operationId);
     if (!backup || backup.payload.artifactId !== evidence.backupArtifactId || backup.payload.artifactDigest !== evidence.backupArtifactDigest) {
       return fail("BLOCKED");
     }
-    if (backup.payload.name !== expectedBackup || evidence.effects.backup.name !== expectedBackup || evidence.effects.backup.uid !== `${request.operationId}-backup`) {
+    if (backup.payload.name !== expectedBackup) {
       return fail("BLOCKED");
     }
-    if (evidence.effects.restoreCluster.uid !== `${request.operationId}-cluster` || evidence.effects.restore.uid !== `${request.operationId}-restore`) {
+    if (
+      evidence.effects.backup.kind !== "PerconaServerMySQLBackup" ||
+      evidence.effects.backup.namespace !== request.plan.target.namespace ||
+      evidence.effects.backup.name !== expectedBackup ||
+      evidence.effects.backup.uid !== `${request.operationId}-backup` ||
+      evidence.effects.backup.generation !== 1
+    ) {
+      return fail("BLOCKED");
+    }
+    if (
+      evidence.effects.restoreCluster.kind !== "PerconaServerMySQL" ||
+      evidence.effects.restoreCluster.namespace !== request.plan.restoreNamespace ||
+      evidence.effects.restoreCluster.name !== expectedCluster ||
+      evidence.effects.restoreCluster.uid !== `${request.operationId}-cluster` ||
+      evidence.effects.restoreCluster.generation !== 1
+    ) {
+      return fail("BLOCKED");
+    }
+    if (
+      evidence.effects.restore.kind !== "PerconaServerMySQLRestore" ||
+      evidence.effects.restore.namespace !== request.plan.restoreNamespace ||
+      evidence.effects.restore.name !== expectedRestore ||
+      evidence.effects.restore.uid !== `${request.operationId}-restore` ||
+      evidence.effects.restore.generation !== 1
+    ) {
       return fail("BLOCKED");
     }
     if (!sameJson(evidence.artifactDestination, request.plan.artifactDestination)) {
@@ -238,17 +335,24 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
       evidence.oracle.count !== expected.count ||
       evidence.oracle.orderedRowHash !== expected.orderedRowHash ||
       evidence.oracle.setBAbsent !== expected.setBAbsent ||
-      evidence.oracle.schemaDigest !== expected.schemaDigest ||
-      evidence.observedSchemaDigest !== expected.schemaDigest ||
-      evidence.artifactDigest !== evidence.backupArtifactDigest ||
-      evidence.backupArtifactDigest !== sha256Canonical(setA())
+      evidence.oracle.schemaDigest !== SCHEMA_DIGEST ||
+      evidence.oracle.primaryKeyMin !== 1 ||
+      evidence.oracle.primaryKeyMax !== 1000 ||
+      evidence.observedSchemaDigest !== SCHEMA_DIGEST ||
+      evidence.artifactDigest !== evidence.backupArtifactDigest
     ) {
+      return fail("BLOCKED");
+    }
+    if (typeof input.artifactBytes !== "string" || input.artifactBytes.length < 1) {
+      return fail("BLOCKED");
+    }
+    if (artifactDigestOf(input.artifactBytes) !== evidence.backupArtifactDigest) {
       return fail("BLOCKED");
     }
     if (!isRowArray(input.artifactRows)) {
       return fail("BLOCKED");
     }
-    if (sha256Canonical(input.artifactRows) !== evidence.backupArtifactDigest) {
+    if (sha256Canonical(input.artifactRows) === evidence.artifactDigest) {
       return fail("BLOCKED");
     }
     const liveOracle = evaluateOracle(input.artifactRows, { ...FIXED_SCHEMA });
@@ -256,7 +360,8 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
       liveOracle.count !== evidence.oracle.count ||
       liveOracle.orderedRowHash !== evidence.oracle.orderedRowHash ||
       liveOracle.setBAbsent !== evidence.oracle.setBAbsent ||
-      liveOracle.schemaDigest !== evidence.oracle.schemaDigest
+      liveOracle.schemaDigest !== evidence.oracle.schemaDigest ||
+      liveOracle.primaryKeyMin !== evidence.oracle.primaryKeyMin
     ) {
       return fail("BLOCKED");
     }

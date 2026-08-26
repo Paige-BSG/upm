@@ -1,7 +1,7 @@
 import { FakeK8s, readTarget, type CrObject } from "./fake-k8s.ts";
 import { appendEvent, closedVerdict, reduceJournal } from "./journal.ts";
 import { backupName, restoreClusterName, restoreName } from "./names.ts";
-import { evaluateOracle, schemaMatchesFixed, setB } from "./oracle.ts";
+import { artifactDigestOf, encodeBackupArtifact, evaluateOracle, schemaMatchesFixed, setB } from "./oracle.ts";
 import { computeFactsDigest, planHash } from "./plan-hash.ts";
 import { STARTUP_PINS } from "./pins.ts";
 import { agentHasPrivilege, writerMustAllow } from "./rbac.ts";
@@ -49,6 +49,7 @@ export type CrashAfter =
   | "afterRestoreApi"
   | "afterSetBApi"
   | "afterEvidenceStore"
+  | "afterEvidenceStoreWa"
   | "none";
 
 export type ExecuteInput = {
@@ -112,6 +113,7 @@ function exactObject(left: CrObject, right: CrObject): boolean {
     sha256Canonical(left.observedSchema ?? null) === sha256Canonical(right.observedSchema ?? null) &&
     left.artifactId === right.artifactId &&
     left.artifactDigest === right.artifactDigest &&
+    left.artifactBytes === right.artifactBytes &&
     left.backupStatus === right.backupStatus
   );
 }
@@ -295,7 +297,10 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       return deny(request.operationId, request.planHash, "BLOCKED", true);
     }
     const persistedClock = loadIntentClock(events);
-    const startedAtMs = persistedClock?.startedAtMs ?? input.startedAtMs ?? nowMs;
+    if (input.startedAtMs !== undefined && input.startedAtMs > nowMs) {
+      return deny(request.operationId, request.planHash, "BLOCKED");
+    }
+    const startedAtMs = persistedClock?.startedAtMs ?? nowMs;
     const deadlineMs = persistedClock?.deadlineMs ?? startedAtMs + request.plan.timeoutMs;
     const pastDeadline = (): boolean => cluster.nowMs > deadlineMs;
     if (pastDeadline()) {
@@ -339,6 +344,7 @@ function executeInner(input: ExecuteInput): ExecuteResult {
         approvalId: request.approval.approvalId,
         approvalDigest: digest,
         approval: JSON.stringify(request.approval),
+        consumedAt: String(cluster.nowMs),
       });
       approval = request.approval;
       if (crashAfter === "ApprovalConsumed") {
@@ -448,7 +454,8 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       observedSchema,
       backupStatus: "Succeeded",
       artifactId: `${backup}-artifact`,
-      artifactDigest: sha256Canonical(snapshot),
+      artifactBytes: encodeBackupArtifact(request.plan.artifactDestination, snapshot),
+      artifactDigest: artifactDigestOf(encodeBackupArtifact(request.plan.artifactDestination, snapshot)),
     };
     let phaseNow = reduceJournal(eventsFor());
     if (phaseNow === "fenced") {
@@ -476,6 +483,8 @@ function executeInner(input: ExecuteInput): ExecuteResult {
         created.backupStatus !== "Succeeded" ||
         !created.artifactId ||
         !created.artifactDigest ||
+        !created.artifactBytes ||
+        created.artifactDigest !== artifactDigestOf(created.artifactBytes) ||
         !schemaMatchesFixed(created.observedSchema)
       ) {
         return deny(request.operationId, request.planHash, "BLOCKED");
@@ -517,7 +526,7 @@ function executeInner(input: ExecuteInput): ExecuteResult {
     if (!post) {
       return deny(request.operationId, request.planHash, "DRIFT");
     }
-    const postTarget = readTarget(post);
+    let postTarget = readTarget(post);
     const driftedDuring =
       postTarget.uid !== request.plan.target.uid ||
       postTarget.generation !== request.plan.target.generation ||
@@ -530,6 +539,8 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       backupObj.backupStatus !== "Succeeded" ||
       !backupObj.artifactId ||
       !backupObj.artifactDigest ||
+      !backupObj.artifactBytes ||
+      backupObj.artifactDigest !== artifactDigestOf(backupObj.artifactBytes) ||
       !backupObj.observedSchema ||
       !schemaMatchesFixed(backupObj.observedSchema)
     ) {
@@ -643,89 +654,130 @@ function executeInner(input: ExecuteInput): ExecuteResult {
     }
     const journal = eventsFor();
     const restoreObj = cluster.get(actor, "PerconaServerMySQLRestore", request.plan.restoreNamespace, restore);
-    if (!restoreObj || !backupObj.uid || !restored.uid) {
+    if (!restoreObj || !backupObj.uid || !restored.uid || !backupObj.artifactId || !backupObj.artifactDigest) {
       return deny(request.operationId, request.planHash, "BLOCKED");
     }
-    const unsignedEvidence: Omit<EvidenceManifest, "signature"> = {
-      apiVersion: API_VERSION,
-      kind: EVIDENCE_KIND,
-      schemaVersion: SCHEMA_VERSION,
-      operationId: request.operationId,
-      planHash: request.planHash,
-      actor: actor.actorId,
-      clusterUid: request.plan.clusterUid,
-      sourceNamespace: request.plan.target.namespace,
-      restoreNamespace: request.plan.restoreNamespace,
-      targetPre: request.plan.target,
-      targetPost: postTarget,
-      approval,
-      journalRoot: journal[0]!.eventDigest,
-      journalHead: journal[journal.length - 1]!.eventDigest,
-      backupArtifactId: backupObj.artifactId,
-      backupArtifactDigest: backupObj.artifactDigest,
-      observedSchemaDigest: oracle.schemaDigest,
-      artifactDigest: backupObj.artifactDigest,
-      artifactDestination: request.plan.artifactDestination,
-      oracle: {
-        schemaDigest: oracle.schemaDigest,
-        count: oracle.count,
-        primaryKeyMin: oracle.primaryKeyMin,
-        primaryKeyMax: oracle.primaryKeyMax,
-        orderedRowHash: oracle.orderedRowHash,
-        setBAbsent: oracle.setBAbsent,
-      },
-      intent: {
+    const backupArtifactId = backupObj.artifactId;
+    const backupArtifactDigest = backupObj.artifactDigest;
+    const storeEvent = journal.find((event) => event.type === "EvidenceStoreWriteAhead");
+    const journalHead = storeEvent?.previousEventDigest ?? journal[journal.length - 1]!.eventDigest;
+    const closedAtMs = storeEvent?.payload.closedAtMs ? Number(storeEvent.payload.closedAtMs) : cluster.nowMs;
+    const signManifest = (verdict: DenialCode | "OK", drifted: boolean): EvidenceManifest => {
+      const unsigned: Omit<EvidenceManifest, "signature"> = {
+        apiVersion: API_VERSION,
+        kind: EVIDENCE_KIND,
+        schemaVersion: SCHEMA_VERSION,
         operationId: request.operationId,
         planHash: request.planHash,
+        actor: actor.actorId,
+        clusterUid: request.plan.clusterUid,
+        sourceNamespace: request.plan.target.namespace,
+        restoreNamespace: request.plan.restoreNamespace,
+        targetPre: request.plan.target,
+        targetPost: postTarget,
+        approval,
+        journalRoot: journal[0]!.eventDigest,
+        journalHead,
+        backupArtifactId,
+        backupArtifactDigest,
+        observedSchemaDigest: oracle.schemaDigest,
+        artifactDigest: backupArtifactDigest,
+        artifactDestination: request.plan.artifactDestination,
+        oracle: {
+          schemaDigest: oracle.schemaDigest,
+          count: oracle.count,
+          primaryKeyMin: oracle.primaryKeyMin,
+          primaryKeyMax: oracle.primaryKeyMax,
+          orderedRowHash: oracle.orderedRowHash,
+          setBAbsent: oracle.setBAbsent,
+        },
+        intent: {
+          operationId: request.operationId,
+          planHash: request.planHash,
+          factsSnapshotId: request.plan.factsSnapshotId,
+          factsDigest: request.plan.factsDigest,
+          startedAtMs,
+          deadlineMs,
+        },
+        facts: {
+          snapshotId: request.plan.factsSnapshotId,
+          digest: request.plan.factsDigest,
+          clusterUid: request.plan.clusterUid,
+          targetNamespaceUid: request.plan.targetNamespaceUid,
+          restoreNamespaceUid: request.plan.restoreNamespaceUid,
+          target: request.plan.target,
+        },
+        effects: {
+          backup: effectOf(backupObj),
+          restoreCluster: effectOf(restored),
+          restore: effectOf(restoreObj),
+        },
+        timeline: {
+          startedAtMs,
+          deadlineMs,
+          closedAtMs,
+        },
+        pins: evidencePins(),
+        trustIdentity: {
+          approvalKeyId: approval.keyId,
+          executionKeyId: keys.execution.keyId,
+          approvalPolicyVersion: request.plan.approvalPolicyVersion,
+          approvalSubject: approval.approverSubject,
+          approvalRole: request.plan.requiredApproverRole,
+        },
         factsSnapshotId: request.plan.factsSnapshotId,
         factsDigest: request.plan.factsDigest,
-        startedAtMs,
-        deadlineMs,
-      },
-      facts: {
-        snapshotId: request.plan.factsSnapshotId,
-        digest: request.plan.factsDigest,
-        clusterUid: request.plan.clusterUid,
-        targetNamespaceUid: request.plan.targetNamespaceUid,
-        restoreNamespaceUid: request.plan.restoreNamespaceUid,
-        target: request.plan.target,
-      },
-      effects: {
-        backup: effectOf(backupObj),
-        restoreCluster: effectOf(restored),
-        restore: effectOf(restoreObj),
-      },
-      timeline: {
-        startedAtMs,
-        deadlineMs,
-        closedAtMs: cluster.nowMs,
-      },
-      pins: evidencePins(),
-      trustIdentity: {
-        approvalKeyId: approval.keyId,
-        executionKeyId: keys.execution.keyId,
-        approvalPolicyVersion: request.plan.approvalPolicyVersion,
-        approvalSubject: approval.approverSubject,
-        approvalRole: request.plan.requiredApproverRole,
-      },
-      factsSnapshotId: request.plan.factsSnapshotId,
-      factsDigest: request.plan.factsDigest,
-      driftedDuring,
-      verdict: driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : "OK",
-      pinsDigest: sha256Canonical(STARTUP_PINS),
-      keyId: keys.execution.keyId,
+        driftedDuring: drifted,
+        verdict,
+        pinsDigest: sha256Canonical(STARTUP_PINS),
+        keyId: keys.execution.keyId,
+      };
+      return { ...unsigned, signature: signCanonical(keys.execution.privateKeyPem, unsigned) };
     };
-    const evidence: EvidenceManifest = {
-      ...unsignedEvidence,
-      signature: signCanonical(keys.execution.privateKeyPem, unsignedEvidence),
+    const persistStore = (manifest: EvidenceManifest): ExecuteResult | null => {
+      const digest = sha256Canonical(manifest);
+      if (phaseNow === "fence_rel_wa") {
+        appendEvent(cluster, actor, request.operationId, "EvidenceStoreWriteAhead", {
+          evidenceDigest: digest,
+          closedAtMs: String(manifest.timeline.closedAtMs),
+          verdict: manifest.verdict,
+          driftedDuring: manifest.driftedDuring ? "true" : "false",
+        });
+        if (crashAfter === "afterEvidenceStoreWa") {
+          return deny(request.operationId, request.planHash, "BLOCKED");
+        }
+      }
+      const existing = cluster.getEvidence(digest);
+      if (!existing) {
+        cluster.putEvidence(digest, manifest);
+      } else if (sha256Canonical(existing) !== digest) {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      if (crashAfter === "afterEvidenceStore") {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      return null;
     };
-    const evidenceDigest = sha256Canonical(evidence);
-    const closePayload = {
-      planHash: request.planHash,
-      verdict: evidence.verdict,
-      evidenceDigest,
-      signature: evidence.signature,
-      closedAtMs: String(evidence.timeline.closedAtMs),
+    const finish = (manifest: EvidenceManifest): ExecuteResult => {
+      const digest = sha256Canonical(manifest);
+      const terminal = manifest.verdict === "FENCE_RELEASE_BLOCKED" ? "FenceReleaseBlocked" : "EvidenceClosed";
+      appendEvent(cluster, actor, request.operationId, terminal, {
+        planHash: request.planHash,
+        verdict: manifest.verdict,
+        evidenceDigest: digest,
+        signature: manifest.signature,
+        closedAtMs: String(manifest.timeline.closedAtMs),
+      });
+      return result(
+        {
+          operationId: request.operationId,
+          planHash: request.planHash,
+          denial: manifest.verdict === "OK" ? null : (manifest.verdict as DenialCode),
+          evidence: manifest,
+          driftedDuring: manifest.driftedDuring,
+        },
+        false,
+      );
     };
     if (phaseNow === "fence_rel_wa") {
       const current = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
@@ -736,104 +788,45 @@ function executeInner(input: ExecuteInput): ExecuteResult {
         try {
           cluster.releaseFence(actor, readTarget(current), fence);
         } catch {
-          const blockedUnsigned: Omit<EvidenceManifest, "signature"> = {
-            ...unsignedEvidence,
-            verdict: "FENCE_RELEASE_BLOCKED",
-            driftedDuring,
-          };
-          const blocked: EvidenceManifest = {
-            ...blockedUnsigned,
-            signature: signCanonical(keys.execution.privateKeyPem, blockedUnsigned),
-          };
-          const blockedDigest = sha256Canonical(blocked);
-          appendEvent(cluster, actor, request.operationId, "EvidenceStoreWriteAhead", { evidenceDigest: blockedDigest });
-          cluster.putEvidence(blockedDigest, blocked);
-          if (crashAfter === "afterEvidenceStore") {
-            return deny(request.operationId, request.planHash, "BLOCKED");
+          const blocked = signManifest("FENCE_RELEASE_BLOCKED", driftedDuring);
+          const crashed = persistStore(blocked);
+          if (crashed) {
+            return crashed;
           }
-          appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", {
-            planHash: request.planHash,
-            verdict: blocked.verdict,
-            evidenceDigest: blockedDigest,
-            signature: blocked.signature,
-            closedAtMs: String(blocked.timeline.closedAtMs),
-          });
-          return result(
-            {
-              operationId: request.operationId,
-              planHash: request.planHash,
-              denial: "FENCE_RELEASE_BLOCKED",
-              evidence: blocked,
-              driftedDuring,
-            },
-            false,
-          );
+          return finish(blocked);
         }
         if (crashAfter === "afterReleaseApi") {
           return deny(request.operationId, request.planHash, "BLOCKED");
         }
+        const released = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
+        if (released) {
+          postTarget = readTarget(released);
+        }
       } else if (current.annotations[FENCE_ANNOTATION] !== undefined) {
         return deny(request.operationId, request.planHash, "DRIFT");
       }
-      appendEvent(cluster, actor, request.operationId, "EvidenceStoreWriteAhead", { evidenceDigest });
-      cluster.putEvidence(evidenceDigest, evidence);
-      if (crashAfter === "afterEvidenceStore") {
-        return deny(request.operationId, request.planHash, "BLOCKED");
+      const evidence = signManifest(driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : "OK", driftedDuring);
+      const crashed = persistStore(evidence);
+      if (crashed) {
+        return crashed;
       }
-      appendEvent(cluster, actor, request.operationId, "EvidenceClosed", closePayload);
-    } else if (phaseNow === "evidence_wa") {
-      const storedDigest = eventsFor().find((event) => event.type === "EvidenceStoreWriteAhead")?.payload.evidenceDigest;
-      const stored = storedDigest ? cluster.getEvidence(storedDigest) : undefined;
-      if (!stored || !storedDigest || sha256Canonical(stored) !== storedDigest) {
-        return deny(request.operationId, request.planHash, "BLOCKED");
-      }
-      if (stored.verdict === "FENCE_RELEASE_BLOCKED") {
-        appendEvent(cluster, actor, request.operationId, "FenceReleaseBlocked", {
-          planHash: request.planHash,
-          verdict: stored.verdict,
-          evidenceDigest: storedDigest,
-          signature: stored.signature,
-          closedAtMs: String(stored.timeline.closedAtMs),
-        });
-        return result(
-          {
-            operationId: request.operationId,
-            planHash: request.planHash,
-            denial: "FENCE_RELEASE_BLOCKED",
-            evidence: stored,
-            driftedDuring: stored.driftedDuring,
-          },
-          false,
-        );
-      }
-      appendEvent(cluster, actor, request.operationId, "EvidenceClosed", {
-        planHash: request.planHash,
-        verdict: stored.verdict,
-        evidenceDigest: storedDigest,
-        signature: stored.signature,
-        closedAtMs: String(stored.timeline.closedAtMs),
-      });
-      return result(
-        {
-          operationId: request.operationId,
-          planHash: request.planHash,
-          denial: stored.verdict === "OK" ? null : (stored.verdict as DenialCode),
-          evidence: stored,
-          driftedDuring: stored.driftedDuring,
-        },
-        false,
-      );
+      return finish(evidence);
     }
-    return result(
-      {
-        operationId: request.operationId,
-        planHash: request.planHash,
-        denial: driftedDuring ? "TARGET_DRIFTED_DURING_OPERATION" : null,
-        evidence,
-        driftedDuring,
-      },
-      false,
-    );
+    if (phaseNow === "evidence_wa") {
+      if (!storeEvent?.payload.evidenceDigest || !storeEvent.payload.closedAtMs || !storeEvent.payload.verdict) {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      const rebuilt = signManifest(storeEvent.payload.verdict as DenialCode | "OK", storeEvent.payload.driftedDuring === "true");
+      if (sha256Canonical(rebuilt) !== storeEvent.payload.evidenceDigest) {
+        return deny(request.operationId, request.planHash, "BLOCKED");
+      }
+      const crashed = persistStore(rebuilt);
+      if (crashed) {
+        return crashed;
+      }
+      return finish(rebuilt);
+    }
+    return deny(request.operationId, request.planHash, "BLOCKED");
   } catch (error) {
     return mapAdapter(request, error);
   }
