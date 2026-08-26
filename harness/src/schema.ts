@@ -165,7 +165,7 @@ const PAYLOAD_KEYS: Record<JournalEventType, readonly string[]> = {
   BackupWriteAhead: ["name"],
   BackupCreated: ["name", "artifactId", "artifactDigest"],
   SetBWriteAhead: ["name"],
-  SetBApplied: ["digest"],
+  SetBApplied: ["digest", "count"],
   RestoreWriteAhead: ["name"],
   RestoreClusterCreated: ["name"],
   RestoreCreated: ["name"],

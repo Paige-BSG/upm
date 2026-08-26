@@ -56,6 +56,8 @@ export class FakeK8s {
   mode: FakeMode = "ok";
   nowMs = 0;
   apiElapsedMs = 0;
+  deadlineMs: number | null = null;
+  setBMode: "apply" | "noop" | "wrong" | "partial" = "apply";
   forceDriftAfterBackup = false;
   failFenceRelease = false;
   failRenew = false;
@@ -71,6 +73,9 @@ export class FakeK8s {
   }
 
   private guard(): void {
+    if (this.deadlineMs !== null && this.nowMs + this.apiElapsedMs > this.deadlineMs) {
+      throw new AdapterTimeoutError("TIMEOUT");
+    }
     this.nowMs += this.apiElapsedMs;
     if (this.mode === "fail") {
       throw new AdapterFailureError("ADAPTER_FAILURE");
@@ -184,12 +189,18 @@ export class FakeK8s {
   }
 
   writeSetB(target: TargetRef): void {
+    this.guard();
+    if (this.setBMode === "noop") {
+      return;
+    }
     const current = this.objects.get(key(target.namespace, "PerconaServerMySQL", target.name));
     if (!current || !current.rows) {
       throw new AdapterFailureError("MISSING");
     }
     const byId = new Map(current.rows.map((row) => [row.id, { ...row }]));
-    for (const row of setB()) {
+    const rows =
+      this.setBMode === "partial" ? setB().slice(0, 50) : this.setBMode === "wrong" ? setB().map((row) => ({ id: row.id, payload: "0".repeat(64) })) : setB();
+    for (const row of rows) {
       byId.set(row.id, { ...row });
     }
     current.rows = [...byId.values()].sort((left, right) => left.id - right.id);
@@ -197,6 +208,7 @@ export class FakeK8s {
   }
 
   putEvidence(digest: string, manifest: EvidenceManifest): void {
+    this.guard();
     this.evidence.set(digest, manifest);
   }
 

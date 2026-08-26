@@ -1,6 +1,6 @@
 import { reduceJournal, replayJournal } from "./journal.ts";
 import { backupName, restoreClusterName, restoreName } from "./names.ts";
-import { artifactDigestOf, evaluateOracle, FIXED_SCHEMA, SCHEMA_DIGEST, setA, setB } from "./oracle.ts";
+import { artifactDigestOf, evaluateOracle, FIXED_SCHEMA, SCHEMA_DIGEST, setA, setAB } from "./oracle.ts";
 import { computeFactsDigest, planHash } from "./plan-hash.ts";
 import { STARTUP_PINS } from "./pins.ts";
 import { sha256Canonical } from "./rfc8785.ts";
@@ -283,7 +283,8 @@ export function verifyOffline(input: OfflineVerifyInput): OfflineVerifyResult {
     if (
       payloadOf(events, "BackupWriteAhead")?.name !== expectedBackup ||
       payloadOf(events, "SetBWriteAhead")?.name !== request.plan.target.name ||
-      payloadOf(events, "SetBApplied")?.digest !== sha256Canonical(setB()) ||
+      payloadOf(events, "SetBApplied")?.digest !== sha256Canonical(setAB()) ||
+      payloadOf(events, "SetBApplied")?.count !== "1100" ||
       payloadOf(events, "RestoreWriteAhead")?.name !== expectedRestore ||
       payloadOf(events, "RestoreClusterCreated")?.name !== expectedCluster ||
       payloadOf(events, "RestoreCreated")?.name !== expectedRestore

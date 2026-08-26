@@ -1,7 +1,7 @@
 import { FakeK8s, readTarget, type CrObject } from "./fake-k8s.ts";
 import { appendEvent, closedVerdict, reduceJournal } from "./journal.ts";
 import { backupName, restoreClusterName, restoreName } from "./names.ts";
-import { artifactDigestOf, encodeBackupArtifact, evaluateOracle, schemaMatchesFixed, setB } from "./oracle.ts";
+import { artifactDigestOf, encodeBackupArtifact, evaluateOracle, observeSetAB, schemaMatchesFixed } from "./oracle.ts";
 import { computeFactsDigest, planHash } from "./plan-hash.ts";
 import { STARTUP_PINS } from "./pins.ts";
 import { agentHasPrivilege, writerMustAllow } from "./rbac.ts";
@@ -221,6 +221,8 @@ export function executeBackupProof(input: ExecuteInput): ExecuteResult {
       return deny("unknown", "unknown", "BLOCKED");
     }
     throw error;
+  } finally {
+    input.cluster.deadlineMs = null;
   }
 }
 
@@ -233,7 +235,8 @@ function executeInner(input: ExecuteInput): ExecuteResult {
   }
   const { agent, actor, cluster, keys, nowMs } = input;
   const crashAfter = input.crashAfter ?? "none";
-  cluster.nowMs = nowMs;
+  cluster.nowMs = Math.max(cluster.nowMs, nowMs);
+  cluster.deadlineMs = null;
   if (request.plan.budget !== PHASE1_BUDGET) {
     return deny(request.operationId, request.planHash, "BLOCKED");
   }
@@ -302,6 +305,7 @@ function executeInner(input: ExecuteInput): ExecuteResult {
     }
     const startedAtMs = persistedClock?.startedAtMs ?? nowMs;
     const deadlineMs = persistedClock?.deadlineMs ?? startedAtMs + request.plan.timeoutMs;
+    cluster.deadlineMs = deadlineMs;
     const pastDeadline = (): boolean => cluster.nowMs > deadlineMs;
     if (pastDeadline()) {
       return deny(request.operationId, request.planHash, "TIMEOUT");
@@ -314,18 +318,6 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       }
       approval = consumed.envelope;
     } else {
-      if (
-        !verifyApproval(
-          request.approval,
-          request.planHash,
-          request.plan.requiredApproverSubject,
-          request.plan.requiredApproverRole,
-          keys,
-          nowMs,
-        )
-      ) {
-        return deny(request.operationId, request.planHash, "UNAPPROVED");
-      }
       if (phase === "empty") {
         appendEvent(cluster, actor, request.operationId, "IntentAccepted", {
           planHash: request.planHash,
@@ -338,13 +330,26 @@ function executeInner(input: ExecuteInput): ExecuteResult {
           return deny(request.operationId, request.planHash, "BLOCKED");
         }
       }
+      const consumedAt = cluster.nowMs;
+      if (
+        !verifyApproval(
+          request.approval,
+          request.planHash,
+          request.plan.requiredApproverSubject,
+          request.plan.requiredApproverRole,
+          keys,
+          consumedAt,
+        )
+      ) {
+        return deny(request.operationId, request.planHash, "UNAPPROVED");
+      }
       const digest = sha256Canonical(request.approval);
       appendEvent(cluster, actor, request.operationId, "ApprovalConsumed", {
         planHash: request.planHash,
         approvalId: request.approval.approvalId,
         approvalDigest: digest,
         approval: JSON.stringify(request.approval),
-        consumedAt: String(cluster.nowMs),
+        consumedAt: String(consumedAt),
       });
       approval = request.approval;
       if (crashAfter === "ApprovalConsumed") {
@@ -514,7 +519,14 @@ function executeInner(input: ExecuteInput): ExecuteResult {
       if (crashAfter === "afterSetBApi") {
         return deny(request.operationId, request.planHash, "BLOCKED");
       }
-      appendEvent(cluster, actor, request.operationId, "SetBApplied", { digest: sha256Canonical(setB()) });
+      const observed = observeSetAB(cluster.snapshotRows(request.plan.target.namespace, request.plan.target.name));
+      if (!observed.ok) {
+        return deny(request.operationId, request.planHash, "ORACLE_FAILED");
+      }
+      appendEvent(cluster, actor, request.operationId, "SetBApplied", {
+        digest: observed.digest,
+        count: String(observed.count),
+      });
       if (crashAfter === "SetBApplied") {
         return deny(request.operationId, request.planHash, "BLOCKED");
       }
@@ -633,6 +645,10 @@ function executeInner(input: ExecuteInput): ExecuteResult {
         return deny(request.operationId, request.planHash, "BLOCKED");
       }
     }
+    const sourceObserved = observeSetAB(cluster.snapshotRows(request.plan.target.namespace, request.plan.target.name));
+    if (!sourceObserved.ok) {
+      return deny(request.operationId, request.planHash, "ORACLE_FAILED");
+    }
     const restored = cluster.get(actor, "PerconaServerMySQL", request.plan.restoreNamespace, restoredCluster);
     if (!restored?.rows || !schemaMatchesFixed(restored.observedSchema)) {
       return deny(request.operationId, request.planHash, "ORACLE_FAILED");
@@ -661,8 +677,8 @@ function executeInner(input: ExecuteInput): ExecuteResult {
     const backupArtifactDigest = backupObj.artifactDigest;
     const storeEvent = journal.find((event) => event.type === "EvidenceStoreWriteAhead");
     const journalHead = storeEvent?.previousEventDigest ?? journal[journal.length - 1]!.eventDigest;
-    const closedAtMs = storeEvent?.payload.closedAtMs ? Number(storeEvent.payload.closedAtMs) : cluster.nowMs;
     const signManifest = (verdict: DenialCode | "OK", drifted: boolean): EvidenceManifest => {
+      const closedAtMs = storeEvent?.payload.closedAtMs ? Number(storeEvent.payload.closedAtMs) : cluster.nowMs;
       const unsigned: Omit<EvidenceManifest, "signature"> = {
         apiVersion: API_VERSION,
         kind: EVIDENCE_KIND,
@@ -779,6 +795,11 @@ function executeInner(input: ExecuteInput): ExecuteResult {
         false,
       );
     };
+    if (phaseNow === "fence_rel_wa" || phaseNow === "evidence_wa") {
+      if (pastDeadline()) {
+        return deny(request.operationId, request.planHash, "TIMEOUT");
+      }
+    }
     if (phaseNow === "fence_rel_wa") {
       const current = cluster.get(actor, "PerconaServerMySQL", request.plan.target.namespace, request.plan.target.name);
       if (!current) {

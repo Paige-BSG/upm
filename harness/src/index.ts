@@ -7,6 +7,8 @@ export { STARTUP_PINS, integrationPinsReady } from "./pins.ts";
 export {
   setA,
   setB,
+  setAB,
+  observeSetAB,
   evaluateOracle,
   FIXED_SCHEMA,
   SCHEMA_LITERAL,

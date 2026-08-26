@@ -34,6 +34,21 @@ export function setB(): OracleRow[] {
   });
 }
 
+export function setAB(): OracleRow[] {
+  return [...setA(), ...setB()];
+}
+
+export function observeSetAB(rows: OracleRow[] | undefined): { ok: boolean; digest: string; count: number } {
+  const observed = [...(rows ?? [])].sort((left, right) => left.id - right.id);
+  const expected = setAB();
+  const digest = sha256Canonical(observed);
+  const count = observed.length;
+  const ok =
+    count === expected.length &&
+    expected.every((row, index) => observed[index]?.id === row.id && observed[index]?.payload === row.payload);
+  return { ok, digest, count };
+}
+
 export function orderedRowHash(rows: OracleRow[]): string {
   return sha256Canonical([...rows].sort((left, right) => left.id - right.id));
 }

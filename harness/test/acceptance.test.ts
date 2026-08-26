@@ -492,6 +492,7 @@ test("journal payload forgeries fail after full rehash restore and reclose", () 
     { type: "BackupWriteAhead", key: "name", value: "forged-backup" },
     { type: "SetBWriteAhead", key: "name", value: "forged-setb" },
     { type: "SetBApplied", key: "digest", value: "sha256:forged-setb" },
+    { type: "SetBApplied", key: "count", value: "1000" },
     { type: "RestoreWriteAhead", key: "name", value: "forged-restore" },
     { type: "RestoreClusterCreated", key: "name", value: "forged-cluster" },
     { type: "RestoreCreated", key: "name", value: "forged-restore" },
@@ -592,6 +593,109 @@ test("execution deadline consumes elapsed API time", () => {
   const keys = makeKeys();
   const { result } = run(1_000_000, { cluster, keys });
   assert.equal(result.denial, "TIMEOUT");
+});
+
+test("silent no-op wrong-B and partial-B writes are ORACLE_FAILED", () => {
+  for (const setBMode of ["noop", "wrong", "partial"] as const) {
+    const cluster = liveCluster();
+    cluster.setBMode = setBMode;
+    const { result } = run(1_000_000, { cluster });
+    assert.equal(result.ok, false);
+    assert.equal(result.denial, "ORACLE_FAILED");
+    const source = cluster.snapshotRows("src", "source-db") ?? [];
+    if (setBMode === "noop") {
+      assert.equal(source.length, 1000);
+      assert.equal(source.every((row) => row.id <= 1000), true);
+    }
+    if (setBMode === "partial") {
+      assert.ok(source.length < 1100);
+    }
+    if (setBMode === "wrong") {
+      assert.equal(source.length, 1100);
+      assert.equal(source.find((row) => row.id === 1001)?.payload, "0".repeat(64));
+    }
+  }
+});
+
+test("approval valid at entry but expired at consume is UNAPPROVED live and offline", () => {
+  const keys = makeKeys();
+  const built = makeRequest(1_000_000, keys);
+  const request = {
+    ...built.request,
+    approval: signApproval(keys.approval, {
+      approvalId: built.request.approval.approvalId,
+      planHash: built.request.planHash,
+      approverSubject: "human-approver",
+      issuedAt: 1_000_000,
+      expiresAt: 1_000_300,
+      nonce: built.request.approval.nonce,
+    }),
+  };
+  const cluster = liveCluster();
+  cluster.apiElapsedMs = 100;
+  const live = executeBackupProof({
+    request,
+    agent: SAFE_AGENT,
+    actor: ACTOR,
+    cluster,
+    keys: keys.trusted,
+    nowMs: 1_000_000,
+  });
+  assert.equal(live.ok, false);
+  assert.equal(live.denial, "UNAPPROVED");
+  assert.equal(
+    cluster.listJournal(ACTOR).some((event) => event.type === "ApprovalConsumed"),
+    false,
+  );
+  const good = run(1_000_000);
+  const evidence = good.result.record.evidence!;
+  const events = good.cluster.listJournal(ACTOR);
+  const closed = restoreReclose(
+    events.map((event) =>
+      event.type === "ApprovalConsumed"
+        ? { ...event, payload: { ...event.payload, consumedAt: String(good.request.approval.expiresAt + 200) } }
+        : event,
+    ),
+    evidence,
+    good.keys.execution.privateKeyPem,
+  );
+  const offline = verifyOffline({
+    ...offlineInput(good.request, closed.evidence, good.cluster, good.keys),
+    journal: closed.journal,
+  });
+  assert.equal(offline.ok, false);
+  assert.equal(offline.reason, "UNAPPROVED");
+});
+
+test("store or terminal past deadline is TIMEOUT live and offline", () => {
+  const cluster = liveCluster();
+  cluster.apiElapsedMs = 1100;
+  const keys = makeKeys();
+  const first = run(1_000_000, { cluster, keys });
+  assert.equal(first.result.ok, false);
+  assert.equal(first.result.denial, "TIMEOUT");
+  assert.equal(
+    cluster.listJournal(ACTOR).some((event) => event.type === "EvidenceClosed" || event.type === "FenceReleaseBlocked"),
+    false,
+  );
+  const second = run(1_000_000, { cluster, keys });
+  assert.equal(second.result.ok, false);
+  assert.equal(second.result.denial, "TIMEOUT");
+  if (first.result.record.evidence) {
+    assert.equal(verifyOffline(offlineInput(first.request, first.result.record.evidence, cluster, keys)).ok, false);
+  }
+  const good = run(1_000_000);
+  const evidence = good.result.record.evidence!;
+  const closed = restoreReclose(
+    good.cluster.listJournal(ACTOR),
+    { ...evidence, timeline: { ...evidence.timeline, closedAtMs: evidence.timeline.deadlineMs + 1 } },
+    good.keys.execution.privateKeyPem,
+  );
+  const offline = verifyOffline({
+    ...offlineInput(good.request, closed.evidence, good.cluster, good.keys),
+    journal: closed.journal,
+  });
+  assert.equal(offline.ok, false);
 });
 
 test("lease renew failure is LEASE_CONTENDED", () => {
