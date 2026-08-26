@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://upmio.dev/schema/backup-proof/v0.json",
+  "title": "BackupProof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "operationId",
+    "intent",
+    "facts",
+    "plan",
+    "planHash"
+  ],
+  "properties": {
+    "apiVersion": { "const": "upm.dev/v0" },
+    "kind": { "const": "BackupProof" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "clusterRef", "sourceNamespace", "restoreNamespace"],
+      "properties": {
+        "action": { "const": "backup-proof" },
+        "clusterRef": { "type": "string", "minLength": 1 },
+        "sourceNamespace": { "type": "string", "minLength": 1 },
+        "restoreNamespace": { "type": "string", "minLength": 1 }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clusterRef",
+        "namespace",
+        "clusterType",
+        "mysqlName",
+        "observedGeneration",
+        "resourceVersions",
+        "dataDigest"
+      ],
+      "properties": {
+        "clusterRef": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "clusterType": { "const": "group-replication" },
+        "mysqlName": { "type": "string", "minLength": 1 },
+        "observedGeneration": { "type": "integer" },
+        "resourceVersions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "dataDigest": { "type": "string", "minLength": 1 }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clusterType",
+        "sourceNamespace",
+        "restoreNamespace",
+        "mysqlName",
+        "backupName",
+        "restoreName",
+        "restoreClusterName",
+        "factsFingerprint",
+        "kinds"
+      ],
+      "properties": {
+        "clusterType": { "const": "group-replication" },
+        "sourceNamespace": { "type": "string", "minLength": 1 },
+        "restoreNamespace": { "type": "string", "minLength": 1 },
+        "mysqlName": { "type": "string", "minLength": 1 },
+        "backupName": { "type": "string", "minLength": 1 },
+        "restoreName": { "type": "string", "minLength": 1 },
+        "restoreClusterName": { "type": "string", "minLength": 1 },
+        "factsFingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "kinds": {
+          "const": [
+            "PerconaServerMySQL",
+            "PerconaServerMySQLBackup",
+            "PerconaServerMySQLRestore"
+          ]
+        }
+      }
+    },
+    "planHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planHash", "decided"],
+      "properties": {
+        "planHash": { "type": "string" },
+        "decided": { "enum": ["approve", "deny"] }
+      }
+    }
+  }
+}

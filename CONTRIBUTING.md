@@ -1,8 +1,8 @@
 # Contributing to UPM
 
-Thanks for helping. This project is early — the repository currently holds public
-documentation and an agent LLM wiki, and product source code will be added as phases land.
-The workflow below applies to whatever you change.
+Thanks for helping. This project is early — the repository holds public documentation,
+an agent LLM wiki, and the Phase 1 BackupProof harness. The workflow below applies to
+whatever you change.
 
 ## Reporting a bug or suggesting a feature
 
@@ -17,8 +17,11 @@ private data, or internal context in the issue.
 3. Run the checks that exist today:
    - From `docs/`: `pnpm install`, `pnpm run build`, `pnpm run typecheck`,
      `pnpm run lint:docs`.
-   - From the repo root: `python3 scripts/check_llm_wiki.py .` (validates `llm-wiki/`).
+   - From `harness/`: `npm install`, `npm test`, `npm run typecheck`.
+   - From the repo root: `python3 scripts/check_llm_wiki.py .` and
+     `python3 scripts/check_no_comments.py .`.
    - A secret scan — the repository never contains credentials.
+   - Do not add explanatory comments to UPM TypeScript or tests.
 4. Open a pull request against `main`. Describe what changed and why, and note the
    checks you ran.
 5. Wait for an independent review before merge. The author cannot approve their own

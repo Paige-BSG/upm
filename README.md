@@ -5,10 +5,10 @@ teams operate databases and middleware on Kubernetes. It is designed so that an 
 **agent is a first-class operator** — a human expresses intent, and a deterministic
 control plane executes it safely.
 
-> Status: early. This repository holds the project's public documentation and the agent
-> LLM wiki. There is **no usable product yet** — no product source code is in this
-> repository. The pages in `docs/` describe the intended direction, not a shipped
-> artifact. See the [roadmap](docs/src/content/docs/introduction/roadmap.mdx).
+> Status: early. This repository holds public documentation, the agent LLM wiki, and
+> the Phase 1 BackupProof harness (`harness/`). There is **no shipped product** yet.
+> The pages in `docs/` describe the intended direction. See the
+> [roadmap](docs/src/content/docs/introduction/roadmap.mdx).
 
 ## What's here
 
@@ -18,6 +18,9 @@ control plane executes it safely.
   license-aware library of external resources and open-source components the project
   references. This is for channel agents to understand the tech stack, not the public
   docs site.
+- `harness/` — Phase 1 **BackupProof** Domain Harness: versioned schema, `planHash`
+  approval, drift/RBAC/idempotency, Fake K8s contract tests. Exact image pins are
+  still pending admission.
 - `CONTRIBUTING.md` — how to propose and land a change.
 - `SECURITY.md` — how to report a vulnerability.
 - `CODE_OF_CONDUCT.md` — expected behavior for contributors.
@@ -60,3 +63,15 @@ From the repo root:
 - `python3 scripts/check_llm_wiki.py .` — content-addressed raw records, `--base` guard,
   index/log/link/source checks.
 - `python3 scripts/test_check_llm_wiki.py .` — negative anti-forgery tests for the index.
+
+## Harness tests
+
+From `harness/`:
+
+- `npm install`
+- `npm test`
+- `npm run typecheck`
+
+From the repo root:
+
+- `python3 scripts/check_no_comments.py .`

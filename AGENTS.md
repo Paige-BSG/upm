@@ -1,7 +1,7 @@
 # UPM repository — agent entry router
 
-This is the UPM public repository. It holds project documentation and an agent LLM wiki,
-not (yet) product source code. Agents working in this repo start here.
+This is the UPM public repository. It holds project documentation, an agent LLM wiki,
+and the Phase 1 BackupProof harness. Agents working in this repo start here.
 
 ## Where things live
 
@@ -9,7 +9,9 @@ not (yet) product source code. Agents working in this repo start here.
 |---|---|---|
 | `docs/` | Project documentation (Cloudflare Nimbus, human-first, also serves agents via `/llms.txt`). | `docs/AGENT.md` |
 | `llm-wiki/` | Agent LLM wiki — Karpathy-style knowledge base of pinned, license-aware external resources. | `llm-wiki/AGENTS.md` |
+| `harness/` | Phase 1 BackupProof Domain Harness (TypeScript / Node 22). Schema, planHash, approval, Fake K8s. | `harness/package.json` |
 | `scripts/check_llm_wiki.py` | Validator for `llm-wiki/` (content addressing, `--base`, links/sources). | — |
+| `scripts/check_no_comments.py` | Fail closed if UPM TypeScript/tests or this checker contain explanatory comments. | — |
 
 ## Long-term public-safety principle
 
@@ -37,9 +39,11 @@ and contribute. Follow this from now on:
 Run the checks that exist today:
 
 - `python3 scripts/check_llm_wiki.py .` — LLM wiki validator.
+- `python3 scripts/check_no_comments.py .` — no explanatory comments in `harness/` source/tests.
+- From `harness/`: `npm test`, `npm run typecheck`.
 - From `docs/`: `pnpm run build`, `pnpm run typecheck`, `pnpm run lint:docs`.
 - Secret scan — this repo must never contain a credential. Do not add `.env`,
   `.secret-*`, or any token/password.
 
-Product-code gates (lint, unit, integration, build) will be added once product code
-exists; do not invent an empty pipeline now.
+Startup image/library pins stay `PENDING` until admitted. Do not guess digests.
+Do not add comments to UPM TypeScript, tests, or `scripts/check_no_comments.py`.

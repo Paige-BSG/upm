@@ -1,0 +1,24 @@
+name: harness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - run: python3 scripts/check_no_comments.py .
+      - run: npm ci
+        working-directory: harness
+      - run: npm run typecheck
+        working-directory: harness
+      - run: npm test
+        working-directory: harness
